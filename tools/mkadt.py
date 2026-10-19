@@ -5,6 +5,7 @@ Only what the early boot path actually reads (see NOTES.md); every MMIO
 address comes from the topaz (Redmi Note 12 4G, SM6225 khaje) live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem]
 """
 import hashlib, os, struct, sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adt  # noqa: E402
@@ -56,7 +57,7 @@ def d22ap_product(path=D22AP_ADT):
     if not os.path.exists(path):
         print(f'warning: {path} missing, no /product node', file=sys.stderr)
         return None
-    root, _ = adt.parse(open(path, 'rb').read())
+    root, _ = adt.parse(Path(path).read_bytes())
     for c in root.children:
         if dict((k, v) for k, f, v in c.props).get('name') == b'product\0':
             return [(k, v) for k, f, v in c.props if not f and k not in ('name', 'AAPL,phandle')]

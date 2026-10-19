@@ -29,7 +29,13 @@ truncate -s "$size" out/Image
 # newc cpio (ABL dislikes a zero-size ramdisk on some builds) -> diagnostics.
 if [ -n "${1:-}" ]; then
 	if [ "${TARGET:-topaz}" = rain ]; then
-		python3 ../tools/validate_rain_payload.py "$1"
+		if [ "${RAIN_VOLATILE_UFS:-0}" = 1 ]; then
+			python3 ../tools/validate_rain_payload.py --allow-volatile-ufs "$1"
+		elif [ "${RAIN_READONLY_UFS:-0}" = 1 ]; then
+			python3 ../tools/validate_rain_payload.py --allow-readonly-ufs "$1"
+		else
+			python3 ../tools/validate_rain_payload.py "$1"
+		fi
 	fi
 	# Embed the payload after the shim: Topaz ABL drops the v4 boot ramdisk,
 	# and Rain keeps the verified stock v3 ramdisk. Grow ARM64 image_size.

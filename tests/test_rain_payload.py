@@ -11,8 +11,13 @@ import mkadt  # noqa: E402
 import validate_rain_payload as check  # noqa: E402
 
 
-def payload(rain=True):
+def payload(rain=True, readonly_ufs=False, cmdline=''):
     tree = mkadt.build(seed=b'0' * 64, rain=rain)
+    if readonly_ufs:
+        tree.children.append(mkadt.node('sweet-ufs', [
+            ('compatible', mkadt.cstr('qcom,ufshc')),
+            ('reg', mkadt.u64(0x04804000, 0x3000)),
+        ]))
     device_tree = adt.serialize(tree)
     virt = 0xfffffff006000000
     header = check.BASE_HEADER + check.SEG_SIZE
@@ -23,6 +28,7 @@ def payload(rain=True):
     struct.pack_into('<7Q', data, 0x10, virt, virt + 0x100, adt_off, len(device_tree),
                      virt + 0x4000, check.PHYS_BASE, check.MEM_SIZE)
     struct.pack_into('<4Q', data, check.BASE_HEADER, virt, 0x4000, header, 64)
+    data[0x48:0x48 + len(cmdline)] = cmdline.encode()
     data[adt_off:adt_off + len(device_tree)] = device_tree
     data.extend(bytes((-len(data)) & 7))
     return data
@@ -48,6 +54,30 @@ class RainPayloadTest(unittest.TestCase):
     def test_rejects_topaz_tree(self):
         with self.assertRaisesRegex(ValueError, 'not a Rain'):
             check.validate(payload(rain=False))
+
+    def test_readonly_ufs_requires_explicit_mode(self):
+        data = payload(readonly_ufs=True, cmdline='rd=ufsroot0 unentitled_ios_sim_launch=1')
+        with self.assertRaisesRegex(ValueError, 'must omit sweet-ufs'):
+            check.validate(data)
+        check.validate(data, allow_readonly_ufs=True)
+
+    def test_readonly_ufs_rejects_write_flags(self):
+        data = payload(readonly_ufs=True, cmdline='rd=ufsroot0 ufsrw=1')
+        with self.assertRaisesRegex(ValueError, 'without physical write flags'):
+            check.validate(data, allow_readonly_ufs=True)
+
+    def test_volatile_ufs_requires_explicit_overlay(self):
+        data = payload(readonly_ufs=True, cmdline='rd=ufsroot0 ufscow=1 rootrw=1')
+        with self.assertRaisesRegex(ValueError, 'without write flags'):
+            check.validate(data, allow_readonly_ufs=True)
+        check.validate(data, allow_volatile_ufs=True)
+
+    def test_volatile_ufs_rejects_physical_writes_and_duplicate_flags(self):
+        for line in ('rd=ufsroot0 ufscow=1 rootrw=1 ufsrw=1',
+                     'rd=ufsroot0 ufscow=1 rootrw=1 ufscow=0'):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                check.validate(payload(readonly_ufs=True, cmdline=line),
+                               allow_volatile_ufs=True)
 
 
 if __name__ == '__main__':

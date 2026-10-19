@@ -66,7 +66,10 @@ jobs:
           for p in xnu/patches/*.patch xnu/patches/*.sh; do
             b=${p##*/}
             if [ "$DEVICE" = topaz ]; then
-              cp "$p" dxb/patches/
+              case "$b" in
+                0082-zrain-*) ;;
+                *) cp "$p" dxb/patches/ ;;
+              esac
             elif [ "$DEVICE" = rain ]; then
               case "$b" in
                 00[0-7][0-9]-*|008[0-2]-*) python3 tools/rewrite_rain_xnu_patch.py "$p" "dxb/patches/$b" ;;

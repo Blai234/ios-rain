@@ -2,8 +2,8 @@
 
 This tree starts from the supplied `MakrSas/ios-topaz` `topaz` branch ZIP
 (SHA-256 `ababa8319fb621e1941aac4c5cd306660a3b2ef01c25a1be433f13faffda87f2`).
-Topaz itself derives from `dipa-studio/ios-sweet`. The Rain changes are an **early
-hardware configuration**, not a working XNU or iOS build.
+Topaz itself derives from `dipa-studio/ios-sweet`. Rain now boots XNU and a
+minimal test init; full iOS userland remains in bring-up.
 The four upstream Topaz patch files 0103–0106 and its README updates were
 retrieved from commit `0b78dc55a61ea9c1a693192529a328dedcca31fc` and
 checked against GitHub's blob hashes. Rain's patch selection still ends at 0082.
@@ -51,17 +51,21 @@ checked against GitHub's blob hashes. Rain's patch selection still ends at 0082.
 - `tools/check_rain_memory.py --adb PATH_TO_ADB` checks the current Android
   `/proc/iomem` for holes or reservations in the proposed XNU window.
   `tools/validate_rain_payload.py` rejects malformed payload bounds, wrong
-  Rain memory and framebuffer properties, and any storage node. Both Rain
+  Rain memory and framebuffer properties, and storage unless an explicit
+  read-only or volatile UFS mode is selected. Both Rain
   shim builders run the payload preflight before embedding a kernel.
 - The Rain tests check identity, storage exclusion, memory reservations,
   payload bounds, boot-image round-trip, and rejected placement mismatches.
 - `.github/workflows/xnu.yml` has a `rain` device selection that stops the
-  patch series at 0082. Topaz's 0083–0106 touch, PMIC and display MMIO changes
+  patch series at 0082 plus Rain's `0082-zrain-ufs-cow.patch`. Topaz's 0083–0106 touch, PMIC and display MMIO changes
   remain in the Topaz build only. For Rain, `tools/rewrite_rain_xnu_patch.py`
   rewrites the dependent early-console patches 0010 and 0012 from Sweet's
   `0x9c000000`, 1080×2400, 4320-byte framebuffer to Rain's `0x5c000000`,
   720×1650, 2880-byte layout, and keeps all 21 stage markers within 720 px.
-  Both rewritten diffs parse with `git apply --stat`; compilation is pending.
+  Both rewritten diffs parse with `git apply --stat`. The Rain XNU build passed
+  in GitHub Actions run `39225824047` at commit `c4da78e`. The kernel SHA-256
+  is `324d2f5d111a4c110128513ddbfd54dc777aaeb4f42ac49ea8a0f9da851e4cdc`.
+  The rewriter copies untouched binary patches byte for byte.
 
 ## Temporary boot result, 2026-10-19
 
@@ -92,27 +96,78 @@ using the new memory window has been booted on the phone. The offline boot
 candidate is `shim/out/shim-boot.img` (15,941,632 bytes, SHA-256
 `804b06a70f5d83c809fff96bf7a652cbbbcac8ac1285ff140e3f7561d0d9af89`).
 
+## Userspace milestone, 2026-10-19
+
+Mockfs ramdisk boot with a minimal PID 1 (sweet-init.S): the kernel mounted
+md0 as BSD root, crossed the user/kernel boundary, and exec'd the init binary.
+The init opens `/dev/console`, writes `*** SWEET userspace: init running as
+PID 1 ***`, then loops printing heartbeats every 5 seconds. User photo
+`IMG_0130.jpeg` confirms: `BSD root: md0, major 1, minor 0`, then
+`load_init_program: attempting to load /sbin/launchd`, then the PID 1 message
+and multiple alive heartbeats. Syscalls (open, write, getpid, select) all work.
+
+The boot image is `xnu/out-rain-ci/mockfs-shim/shim-boot.img` (21,929,984
+bytes). The init binary (16,635 bytes, ad-hoc signed arm64 Mach-O) was compiled
+with host LLVM 22 from `tools/sweet-init.S` via `tools/mkinit.py` and used as
+`--ramdisk` to `tools/mkpayload.py` (mockfs serves it as `/sbin/launchd`).
+The ADT is `research/rain-product.adt` (includes D22AP `/product` node for
+iPhone X identity). Command line:
+`debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=md0`.
+This is a temporary `fastboot boot`; nothing was flashed.
+
+## Read-only UFS root and launchd panic, 2026-10-19
+
+The user's `IMG_0137.jpeg` and `IMG_0138.jpeg` show a later temporary XNU
+boot that found `userdata` through the UFS driver in **read-only** mode,
+mounted `iOSRoot` as HFS, and attempted to load `/sbin/launchd`. The panic is
+`unexpected SIGKILL of launchd (CS_KILLED)` with OS_REASON_EXEC namespace 9,
+code `0xe`. The inherited Sweet bring-up encountered this same code when an
+iOS binary was rejected by the macOS-configured kernel; it progressed with
+`unentitled_ios_sim_launch=1`. The later "home handshake structure not
+initialized" line is not yet proven to be the cause of the launchd kill.
+
+The new `xnu/out-rain-ci/ufsroot-platform-shim/shim-boot.img` retains the
+same kernel, ADT, and segments as the user's `ufsroot0` payload while adding
+that one boot argument. It passed a new explicit read-only UFS preflight:
+the ADT host address is `0x04804000`, the root is `ufsroot0`, and neither
+`ufsrw` nor `rootrw` is present. Its SHA-256 is
+`8ac791ff757705e3120b650343105f0a1fb00f4c8c2af9294ea9671bbc5afd19`.
+`fastboot boot` accepted it. The user's `IMG_0139.jpeg` shows `launchd`
+running `fsck` and `mount-phase-1`, so it passed the previous platform kill.
+`mount_hfs` cannot update `/` on the read-only UFS device (`Read-only file
+system`), and `mount` exits status 1; launchd then panics on that failed boot
+task. This boot did not flash a phone partition. The origin of the HFS image
+already on the phone has not been verified in this session.
+
+The next candidate patch adds `ufscow=1`: physical reads still come from
+`userdata`, while a bounded 64 MiB RAM overlay absorbs block writes and
+substitutes them on later reads. It refuses physical UFS data-out commands
+in this mode and disables the persistent partition log. `rootrw=1` allows
+HFS to mount writable against that volatile device. The preflight requires
+both arguments and rejects `ufsrw`; 19 Rain tests pass. The patch applies to
+the selected 0082 UFS source, but no kernel build or phone boot has yet
+validated it. Overlay contents disappear on reset.
+
 ## Remaining gates before XNU / iOS boot
 
 1. Reconcile hardcoded 1080×2400 framebuffer and touch values in inherited XNU
    display and HID patches with Rain's 720×1650 panel. The early bootstrap
    console patch now uses Rain geometry, but later `SweetHID` scaling and
-   userland display presentation remain inherited. The copied tree has no XNU
-   binary or iPhone X `/product` device tree. Rain's macOS CI has not been run.
-2. Validate an XNU kernel build on a macOS runner, then create a matching
-   payload for the shim. Repeat `tools/check_rain_memory.py` on the live
-   Android boot, check memory placement, early console and the panel path
-   before connecting storage or trying iOS userland. This workspace has no
-   XNU 8796 build, configured Git remote, or macOS runner; the user does not
-   yet have a GitHub repository for the Actions workflow.
+   userland display presentation remain inherited. The D22AP `/product`
+   device tree has been extracted from Apple's iPhone X 16.7.16 restore image
+   into ignored `research/ipsw-x/d22ap.adt`.
+2. Build and test the volatile UFS overlay, then work through the next
+   userland boot failure. Repeat the live memory preflight before future
+   kernel placement changes.
 3. Implement and test Rain's Focaltech SPI touch and key services using the
    observed driver, GPIO and PMIC data. The Topaz touch driver and MDP timings
    are device-specific and remain excluded.
-4. Audit and test the UFS driver with disposable media or instrumentation. The
+4. Audit and test the physical UFS write path with disposable media or instrumentation. The
    Topaz project records LUN0 GPT damage after iOS writes; patch 0088 adds a
-   guard and watchdog but does not establish the underlying cause. Keep Rain's
-   storage node absent until this is resolved and all phone partitions are
-   backed up. No `userdata` flash is part of this baseline.
+   guard and watchdog but does not establish the underlying cause. Keep UFS
+   physical device read-only during Rain boot tests; the read-only mount
+   observed in the photos does not validate writes. No partition flash was
+   performed in this session.
 
 `tools/backup_rain.py` makes read-only local copies of small calibration and
 boot partitions in ignored `backup/`. It saved 13 partitions to

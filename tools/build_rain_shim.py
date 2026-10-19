@@ -38,7 +38,8 @@ def run(*args):
     subprocess.run(args, check=True)
 
 
-def build(llvm_bin, output, stock_boot, vendor_boot, payload=None):
+def build(llvm_bin, output, stock_boot, vendor_boot, payload=None,
+          allow_readonly_ufs=False, allow_volatile_ufs=False):
     output.mkdir(parents=True, exist_ok=True)
     clang = tool('clang', llvm_bin)
     ld = tool('ld.lld', llvm_bin)
@@ -75,7 +76,8 @@ def build(llvm_bin, output, stock_boot, vendor_boot, payload=None):
     data.extend(bytes(ends[0] - len(data)))
     if payload:
         payload_bytes = payload.read_bytes()
-        validate_payload(payload_bytes)
+        validate_payload(payload_bytes, allow_readonly_ufs=allow_readonly_ufs,
+                         allow_volatile_ufs=allow_volatile_ufs)
         data.extend(bytes((-len(data)) % 4096))
         data.extend(payload_bytes)
         struct.pack_into('<Q', data, 16, len(data))
@@ -98,8 +100,15 @@ def main():
     parser.add_argument('--llvm-bin', type=Path)
     parser.add_argument('--output', type=Path, default=SHIM / 'out')
     parser.add_argument('--payload', type=Path, help='optional prepared XNU payload')
+    parser.add_argument('--allow-readonly-ufs', action='store_true',
+                        help='allow only an observed Rain UFS node with read-only root arguments')
+    parser.add_argument('--allow-volatile-ufs', action='store_true',
+                        help='allow an observed Rain UFS node with a RAM write overlay')
     args = parser.parse_args()
-    build(args.llvm_bin, args.output, args.stock_boot, args.stock_vendor_boot, args.payload)
+    if (args.allow_readonly_ufs or args.allow_volatile_ufs) and not args.payload:
+        parser.error('UFS mode requires --payload')
+    build(args.llvm_bin, args.output, args.stock_boot, args.stock_vendor_boot,
+          args.payload, args.allow_readonly_ufs, args.allow_volatile_ufs)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,69 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain iOS root milestone (2026-10-19, latest)
+
+GitHub repository `Blai234/ios-rain` has the `rain` branch. macOS XNU workflow
+run `39225824047` succeeded at commit `c4da78e`; the 17,612,192-byte kernel
+`xnu/out-rain-ci/kernel.development.sweet` matches Actions SHA-256
+`324d2f5d111a4c110128513ddbfd54dc777aaeb4f42ac49ea8a0f9da851e4cdc`.
+The first run `39225506108` failed because the patch rewriter decoded a
+binary patch as UTF-8; `c4da78e` made unchanged patches byte-preserving.
+
+The user's `IMG_0137.jpeg` and `IMG_0138.jpeg` show a later, independent
+temporary boot with the Rain UFS node: `SWEET UFS` reports the `userdata`
+partition read-only, `BSD root: ufsroot0`, and `hfs: mounted iOSRoot`.
+`launchd` then died with `CS_KILLED`, OS_REASON_EXEC namespace 9 code 0xe.
+The inherited Sweet notes identify this as an iOS binary rejected by the
+macOS-configured XNU build; Sweet advanced past the same code with the
+development boot argument `unentitled_ios_sim_launch=1`. The additional
+"home handshake structure not initialized" text appears after the panic and
+is not yet identified as the primary cause. The source of the on-phone HFS
+image and whether it was written during the user's independent work have not
+been verified here.
+
+New payload `xnu/out-rain-ci/rain-ufsroot-platform.payload` differs from the
+user's prior `rain-ufsroot.payload` only in its command line: it adds
+`unentitled_ios_sim_launch=1` and retains `rd=ufsroot0` without `ufsrw` or
+`rootrw`. `tools/validate_rain_payload.py --allow-readonly-ufs` accepts only
+the observed UFS node and write-free boot arguments; the default remains
+storage-free. The image
+`xnu/out-rain-ci/ufsroot-platform-shim/shim-boot.img` is 21,929,984 bytes,
+SHA-256 `8ac791ff757705e3120b650343105f0a1fb00f4c8c2af9294ea9671bbc5afd19`.
+`fastboot boot` sent and launched this image successfully. User photo
+`IMG_0139.jpeg` shows launchd running its `fsck` and `mount-phase-1` jobs.
+The former platform kill is passed. `mount_hfs` then fails to update `/`
+(`GetMasterBlock` error 16 followed by `Read-only file system`), the bindfs
+source is missing, and launchd panics because the mount task exits status 1.
+This operation did not flash a partition.
+
+Next candidate: `xnu/patches/0082-zrain-ufs-cow.patch` adds boot argument
+`ufscow=1`. It records writes to `ufsroot0` in a bounded 64 MiB RAM block
+overlay and applies those blocks to later reads, while `rootrw=1` lets HFS
+mount read-write. The UFS SCSI path refuses physical data-out commands in
+COW mode, physical `ufsrw` and COW are mutually exclusive, and the persistent
+log thread is disabled. A reboot discards all COW data. This patch is Rain-only
+in the workflow. It applied cleanly to the selected 0082 source; the Rain
+preflight explicitly requires `ufscow=1 rootrw=1` and rejects `ufsrw`.
+Nineteen host Rain tests pass. The COW kernel has not yet built or run on the
+phone; next run GitHub Actions, then make a temporary boot image from its
+verified artifact.
+
+## Rain userspace milestone (2026-10-19, latest)
+
+**PID 1 running on Redmi 10C.** Mockfs ramdisk boot: XNU kernel init completes,
+mounts md0 as BSD root, execs sweet-init.S as /sbin/launchd via mockfs. User
+photo `IMG_0130.jpeg` confirms PID 1 heartbeats on /dev/console. Syscalls work
+(open, write, getpid, select). Boot image:
+`xnu/out-rain-ci/mockfs-shim/shim-boot.img` (21,929,984 bytes). Init binary:
+`xnu/out-rain-ci/init-build/init` (16,635 bytes, arm64 ad-hoc signed Mach-O
+from sweet-init.S). ADT: `research/rain-product.adt` (with D22AP /product).
+Cmdline: `debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=md0`.
+RAM window `0xb0000000+0x40000000` verified free. Temporary `fastboot boot`,
+nothing flashed. Phone: ADB device 778009e7.
+
+**Next:** UFS storage bring-up for Rain's SM6225, iOS rootfs on userdata
+partition, touch/display driver adaptation (FT8006S 720x1650).
+
 ## Local Rain handoff (2026-10-19)
 
 The Rain workspace is `C:\Users\Blai\Downloads\ios-rain-port\ios-topaz-topaz`.

@@ -1,0 +1,166 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -29,6 +29,7 @@
+ #include <sys/uio.h>
+ #include <miscfs/devfs/devfs.h>
+ #include <kern/locks.h>
++#include <kern/kalloc.h>
+ #include <kern/clock.h>
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+@@ -107,6 +108,7 @@
+ 	uint64_t first_block, nblocks;          /* partition, in 4 KiB device blocks */
+ 	uint32_t secsize;                       /* logical sector size for the BSD layer */
+ 	bool writable;                          /* boot-arg ufsrw=1 */
++	bool cow;                               /* boot-arg ufscow=1: RAM writes only */
+ 	bool cache;                             /* boot-arg ufscache=1 */
+ 	bool wait;                              /* boot-arg ufswait=1 */
+ 	int bmajor, cmajor;
+@@ -117,6 +119,52 @@
+ static LCK_GRP_DECLARE(sweet_ufs_grp, "sweet_ufs");
+ static LCK_MTX_DECLARE(sweet_ufs_lock, &sweet_ufs_grp);
+ 
++/* Volatile block overlay, guarded by sweet_ufs_lock. Index 0 means absent. */
++#define COW_BUCKETS 4096u
++#define COW_MAX_BLOCKS 16384u                 /* at most 64 MiB of block data */
++static struct {
++	uint64_t lba;
++	uint32_t next;
++	uint8_t *data;
++} cow_blocks[COW_MAX_BLOCKS + 1];
++static uint32_t cow_bucket[COW_BUCKETS];
++static uint32_t cow_used;
++
++static uint32_t
++cow_lookup(uint64_t lba)
++{
++	for (uint32_t n = cow_bucket[lba % COW_BUCKETS]; n; n = cow_blocks[n].next) {
++		if (cow_blocks[n].lba == lba) {
++			return n;
++		}
++	}
++	return 0;
++}
++
++static int
++cow_store(uint64_t lba, const uint8_t *data)
++{
++	uint32_t n = cow_lookup(lba);
++	if (!n) {
++		if (cow_used == COW_MAX_BLOCKS) {
++			printf("SWEET UFS COW: 64 MiB limit reached\n");
++			return ENOSPC;
++		}
++		uint8_t *block = kalloc_data(UFS_BLOCK, Z_WAITOK);
++		if (!block) {
++			return ENOMEM;
++		}
++		n = ++cow_used;
++		cow_blocks[n].data = block;
++		cow_blocks[n].lba = lba;
++		uint32_t bucket = (uint32_t)(lba % COW_BUCKETS);
++		cow_blocks[n].next = cow_bucket[bucket];
++		cow_bucket[bucket] = n;
++	}
++	memcpy(cow_blocks[n].data, data, UFS_BLOCK);
++	return 0;
++}
++
+ static inline uint32_t
+ ufs_rd(uint32_t off)
+ {
+@@ -148,6 +196,10 @@
+ static int
+ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ {
++	/* A COW boot must never emit a data-out command to physical UFS. */
++	if (su.cow && write) {
++		return EPERM;
++	}
+ 	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
+ 	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
+ 	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
+@@ -268,7 +320,17 @@
+ 		(uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba,
+ 		0, (uint8_t)(count >> 8), (uint8_t)count, 0
+ 	};
+-	return ufs_scsi(cdb, sizeof(cdb), count * UFS_BLOCK, false);
++	int error = ufs_scsi(cdb, sizeof(cdb), count * UFS_BLOCK, false);
++	if (!error && su.cow) {
++		uint8_t *bounce = (uint8_t *)(su.dma + DMA_BOUNCE);
++		for (uint32_t i = 0; i < count; i++) {
++			uint32_t n = cow_lookup(lba + i);
++			if (n) {
++				memcpy(bounce + i * UFS_BLOCK, cow_blocks[n].data, UFS_BLOCK);
++			}
++		}
++	}
++	return error;
+ }
+ 
+ /*
+@@ -283,6 +345,16 @@
+ 	    count > su.nblocks - (lba - su.first_block) || lba + count - 1 > UINT32_MAX) {
+ 		printf("SWEET UFS: refusing write of %u blocks at 0x%llx\n", count, lba);
+ 		return EPERM;
++	}
++	if (su.cow) {
++		const uint8_t *bounce = (const uint8_t *)(su.dma + DMA_BOUNCE);
++		for (uint32_t i = 0; i < count; i++) {
++			int error = cow_store(lba + i, bounce + i * UFS_BLOCK);
++			if (error) {
++				return error;
++			}
++		}
++		return 0;
+ 	}
+ 	uint8_t cdb[10] = {
+ 		0x2a, 0,
+@@ -295,6 +367,9 @@
+ static int
+ ufs_sync_cache(void)
+ {
++	if (su.cow) {
++		return 0;
++	}
+ 	static const uint8_t cdb[10] = { 0x35 };       /* SYNCHRONIZE CACHE(10), whole LUN */
+ 	return ufs_scsi(cdb, sizeof(cdb), 0, false);
+ }
+@@ -601,6 +676,12 @@
+ 	PE_parse_boot_argn("ufsroot", want, sizeof(want));
+ 	uint32_t rw = 0;
+ 	PE_parse_boot_argn("ufsrw", &rw, sizeof(rw));
++	uint32_t cow = 0;
++	PE_parse_boot_argn("ufscow", &cow, sizeof(cow));
++	if (rw && cow) {
++		printf("SWEET UFS: ufsrw and ufscow are mutually exclusive\n");
++		return EINVAL;
++	}
+ 	uint32_t cache = 0, wait = 0;
+ 	PE_parse_boot_argn("ufscache", &cache, sizeof(cache));
+ 	PE_parse_boot_argn("ufswait", &wait, sizeof(wait));
+@@ -649,11 +730,12 @@
+ 	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
+ 	devfs_make_node(makedev(su.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rufsroot0");
+ 	/* Only now, with the partition bounds known, can writes be allowed. */
+-	su.writable = (rw != 0);
++	su.cow = (cow == 1);
++	su.writable = (rw != 0) || su.cow;
+ 	su.ready = true;
+ 	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+-	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	    su.cow ? "volatile RAM COW" : su.writable ? "read-write" : "read-only", su.dma_pa);
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/*
+@@ -804,7 +886,7 @@
+ 	thread_t thread;
+ 
+ 	PE_parse_boot_argn("sweetlog", &on, sizeof(on));
+-	if (!on || !su.writable || su.nblocks < 2 * SWEET_LOG_BLOCKS) {
++	if (!on || !su.writable || su.cow || su.nblocks < 2 * SWEET_LOG_BLOCKS) {
+ 		return;
+ 	}
+ 	PE_parse_boot_argn("ufslogsecs", &sweet_log_secs, sizeof(sweet_log_secs));
