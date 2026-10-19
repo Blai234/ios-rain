@@ -146,7 +146,11 @@ in this mode and disables the persistent partition log. `rootrw=1` allows
 HFS to mount writable against that volatile device. The preflight requires
 both arguments and rejects `ufsrw`; 19 Rain tests pass. The patch applies to
 the selected 0082 UFS source, but no kernel build or phone boot has yet
-validated it. Overlay contents disappear on reset.
+validated it. Commit `3212edb` was pushed; Actions run `39281892841` is
+queued without a macOS runner during GitHub's October 19 `macos-14` brownout.
+The next step is to inspect that run and retry after 00:00 UTC if it fails,
+then build and test a temporary `ufscow=1 rootrw=1` image. Overlay contents
+disappear on reset.
 
 ## Remaining gates before XNU / iOS boot
 

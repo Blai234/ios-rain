@@ -44,9 +44,14 @@ COW mode, physical `ufsrw` and COW are mutually exclusive, and the persistent
 log thread is disabled. A reboot discards all COW data. This patch is Rain-only
 in the workflow. It applied cleanly to the selected 0082 source; the Rain
 preflight explicitly requires `ufscow=1 rootrw=1` and rejects `ufsrw`.
-Nineteen host Rain tests pass. The COW kernel has not yet built or run on the
-phone; next run GitHub Actions, then make a temporary boot image from its
-verified artifact.
+Nineteen host Rain tests pass. Committed and pushed as `3212edb`; Actions run
+`39281892841` is queued for `macos-14` without an assigned runner as of
+2026-10-19 16:10 UTC. GitHub's published `macos-14` brownout is scheduled
+2026-10-19 14:00–20 Oct 00:00 UTC; jobs may fail or wait longer
+(https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/).
+The COW kernel has not yet built or run on the phone. Next: inspect the run;
+if it failed due the brownout, rerun after 00:00 UTC; then verify the artifact,
+make a `ufscow=1 rootrw=1` temporary boot image, and test it.
 
 ## Rain userspace milestone (2026-10-19, latest)
 
