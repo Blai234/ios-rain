@@ -5,6 +5,7 @@ Both patches are rewritten together so patch 0012's context matches the Rain
 version of patch 0010. Their topology and hunk line counts stay unchanged.
 """
 import argparse
+import shutil
 from pathlib import Path
 
 EARLY_PATCHES = ('0010-', '0012-')
@@ -42,6 +43,12 @@ def main():
     parser.add_argument('source', type=Path)
     parser.add_argument('destination', type=Path)
     args = parser.parse_args()
+    if not args.source.name.startswith(EARLY_PATCHES):
+        # Many inherited patches contain non-UTF-8 binary data. Only the two
+        # framebuffer diffs need text substitutions; preserve every other
+        # patch byte for byte.
+        shutil.copyfile(args.source, args.destination)
+        return
     patched = rewrite(args.source.name, args.source.read_text(encoding='utf-8'))
     args.destination.write_text(patched, encoding='utf-8', newline='\n')
 

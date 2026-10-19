@@ -132,12 +132,17 @@ jobs:
           SDK=$(xcrun --sdk macosx --show-sdk-path)
           mkdir -p sdk-kernel-platform
           cp -R "$SDK/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform" sdk-kernel-platform/ || true
-          tar czf buildtree.tgz \
-            --exclude='*.o' --exclude='*.cpo' --exclude='*.a' --exclude='*.dSYM' --exclude='*.unstripped' \
-            --exclude='kernel.development.*' --exclude='.git' \
-            -C dxb build/xnu.obj fakeroot/usr/local/include xnu \
-            -C .. sdk-kernel-platform
-          ls -la buildtree.tgz
+          paths=()
+          for p in build/xnu.obj fakeroot/usr/local/include xnu; do
+            [ ! -e "dxb/$p" ] || paths+=("$p")
+          done
+          if [ ${#paths[@]} -gt 0 ]; then
+            tar czf buildtree.tgz \
+              --exclude='*.o' --exclude='*.cpo' --exclude='*.a' --exclude='*.dSYM' --exclude='*.unstripped' \
+              --exclude='kernel.development.*' --exclude='.git' \
+              -C dxb "${paths[@]}" -C .. sdk-kernel-platform
+            ls -la buildtree.tgz
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -151,6 +156,7 @@ jobs:
         run: |
           mkdir -p out/kdk-libs
           for lib in /Library/Developer/KDKs/*/System/Library/KernelSupport/lib*.a; do
+            [ -f "$lib" ] || continue
             b=$(basename "$lib" .a)
             ar t "$lib" > "out/kdk-libs/$b.members.txt" 2>&1 || true
             nm -m "$lib" > "out/kdk-libs/$b.nm.txt" 2>&1 || true
