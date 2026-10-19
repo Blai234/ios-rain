@@ -117,6 +117,30 @@ This is a temporary `fastboot boot`; nothing was flashed.
 
 ## Read-only UFS root and launchd panic, 2026-10-19
 
+`IMG_0145.jpeg` is a one-variable A/B test of the 64 MiB COW boot:
+`cpus=4` was changed to `cpus=1`, with the same kernel, ADT, root, and other
+arguments. It passed the HFS B-tree error loop seen in `IMG_0144.jpeg` and
+reached `backboardd`. This points to CPU concurrency or timing as a factor;
+it does not identify the fault. `backboardd` repeatedly prints
+`IOServiceMatchingFailed for: AppleM2ScalerCSCDriver`. The `|backboardd|`
+prefix comes from the inherited `/dev/null` tee and is not subject to the
+IOKit tracer's 400-line limit. The photo does not prove that this missing
+service prevents the GUI; a later screen observation is pending.
+
+The 512 MiB COW revision built successfully in Actions run
+[`39299890390`](https://github.com/Blai234/ios-rain/actions/runs/39299890390)
+at commit `c082ce4`. The verified kernel SHA-256 is
+`f4d05445d1c1be0241d51e40db0e6339186df24f9549b4acfd6bb28dbc15d333`.
+It has not been device-tested. A temporary diagnostic image using the proven
+64 MiB kernel, `cpus=1`, and `sweetnull=SpringBoard` is prepared at
+`xnu/out-rain-ci/rain-cow-cpu1-quiet-shim/shim-boot.img` (SHA-256
+`77f5ca12f850dac8ec6a5b7e58844866fcc6dbc5e81fcb15622aae8788997673`).
+That argument suppresses only `backboardd`'s `/dev/null` echo so other
+console diagnostics can be observed. Its volatile-UFS preflight and boot-v3
+packaging passed. After verifying the bootloader reports product `rain`, a
+temporary `fastboot boot` returned send OKAY 0.462 s and boot OKAY 0.380 s.
+The screen result is pending.
+
 `IMG_0144.jpeg` is the second temporary COW boot's result. It passed the
 `launchd_cache_loader` AMFI stop and launched further services, including
 `bluetoothuserd`, then printed repeated HFS B-tree `offset #0 invalid
@@ -131,14 +155,14 @@ header, catalog and attributes header nodes are structurally valid. All
 against the source sparse HFS image, only catalog nodes 0, 1 and 19693
 changed. The attributes tree has only node 0 allocated. On-disk damage does
 not explain the visible zero-node errors by itself. This does not prove the
-whole filesystem is sound; the current hypothesis is a runtime COW capacity
-or I/O issue. Samples are outside Git at
+whole filesystem is sound; the later `cpus=1` A/B test points more strongly
+to an SMP or timing issue than COW capacity alone. Samples are outside Git at
 `C:/Users/Blai/Downloads/rain-hfs-diagnostic/`.
 
 The revised Rain COW patch raises its cap to 512 MiB, reports each 64 MiB
 high-water mark, and returns all-overlaid reads from RAM without a physical
-UFS read. It still blocks physical UFS writes. This change needs a new macOS
-build and a temporary phone boot before its effect can be assessed.
+UFS read. It still blocks physical UFS writes. Its macOS build passed; its
+effect on the phone has not been assessed.
 
 `IMG_0143.jpeg` confirms the first temporary Rain COW boot passed root mount
 and several launchd boot tasks. It stops at `launchd_cache_loader[22]`:

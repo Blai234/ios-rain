@@ -1,5 +1,34 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain single-CPU A/B milestone (2026-10-19, latest)
+
+`IMG_0145.jpeg` is a temporary `fastboot boot` of the same 64 MiB volatile
+COW kernel and HFS root used for `IMG_0144.jpeg`, with the payload command line
+changed only from `cpus=4` to `cpus=1`. The payload differs at byte `0x60`
+only; its boot image is `xnu/out-rain-ci/rain-cow-cpu1-shim/shim-boot.img`,
+SHA-256 `6a2234abf2b7ca6000cdc55634ad3ba4ab85e2ba25cd5745ac64302fe908bac5`.
+It passed the earlier HFS zero-node loop and reached `backboardd`, which now
+repeatedly writes `IOServiceMatchingFailed for: AppleM2ScalerCSCDriver`.
+The `|backboardd|` prefix is from patch 0048's `/dev/null` tee, **not** the
+400-line-limited `IOK` trace. It can continue indefinitely. No panic or GUI
+is visible in the supplied photo; whether this lookup is the boot gate remains
+unproven. The one-variable CPU test implicates SMP or timing in the earlier HFS
+loop, but does not establish the exact race or prove that COW capacity is safe.
+
+Actions run `39299890390` for commit `c082ce4` succeeded and produced the
+512 MiB COW kernel (`xnu/out-rain-ci/rain-cow-512-kernel.development.sweet`,
+17,628,864 bytes, SHA-256
+`f4d05445d1c1be0241d51e40db0e6339186df24f9549b4acfd6bb28dbc15d333`).
+It has not been booted. An offline **same-kernel** diagnostic image that keeps
+`cpus=1` but sets `sweetnull=SpringBoard` is at
+`xnu/out-rain-ci/rain-cow-cpu1-quiet-shim/shim-boot.img`, SHA-256
+`77f5ca12f850dac8ec6a5b7e58844866fcc6dbc5e81fcb15622aae8788997673`.
+Preflight and boot-v3 packaging passed; its payload differs from the CPU1
+test only within boot arguments, at bytes `0xe0..0xf5`. The phone returned to
+FASTBOOT, product `rain`, and `fastboot boot` of this image returned send OKAY
+0.462 s and boot OKAY 0.380 s. Await the screen outcome; look for `SMP`,
+`CRASH`, `SWEET FB`, or SpringBoard output. Do not enable physical UFS writes.
+
 ## Rain iOS root milestone (2026-10-19, latest)
 
 `IMG_0144.jpeg` shows much later launchd/userspace activity (including
