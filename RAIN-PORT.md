@@ -15,8 +15,15 @@ checked against GitHub's blob hashes. Rain's patch selection still ends at 0082.
   in the archived FDT. Android reports timer interrupt 19.
 - `/memory/reg`: `0x40000000+0x3dd00000`, `0x80000000+0x40000000`,
   `0xc0000000+0x80000000` (the last two entries appear in the opposite order).
-  The selected XNU window `0xb0000000+0x4d000000` lies in these banks.
-- The highest fixed `/reserved-memory` region observed is below `0x63900000`.
+  Android's live `/proc/iomem` also shows a high RAM reservation at
+  `0xf3c00000–0xffbfffff`. The previous XNU window
+  `0xb0000000+0x4d000000` **overlapped** this reservation and is retired.
+  The revised candidate is `0xb0000000+0x40000000` (1 GiB, ending at
+  `0xf0000000`), 60 MiB below the observed reservation. A live preflight
+  checks for other overlaps; placement still needs confirmation at XNU boot.
+- The highest fixed `/reserved-memory` region found in the FDT is below
+  `0x63900000`; that fact alone did not account for Android's high RAM
+  allocation.
   `cont_splash_region` is `0x5c000000+0x00f00000`; Android's physical display
   size is 720×1650. A temporary shim boot drew stable text and colors through
   this region at a 2880-byte row stride with 32-bit pixels; the exact ABL
@@ -41,8 +48,13 @@ checked against GitHub's blob hashes. Rain's patch selection still ends at 0082.
   the UFS probe from the executable. `tools/build_rain_shim.py` builds the same
   diagnostic shim with host LLVM on Windows. `tools/pack_rain_boot.py` wraps it
   with the backed-up stock boot header and ramdisk in gzip boot-v3 form.
-- `tests/test_rain_adt.py` and `tests/test_rain_boot.py` check Rain identity,
-  storage exclusion, boot-image round-trip, and rejected placement mismatches.
+- `tools/check_rain_memory.py --adb PATH_TO_ADB` checks the current Android
+  `/proc/iomem` for holes or reservations in the proposed XNU window.
+  `tools/validate_rain_payload.py` rejects malformed payload bounds, wrong
+  Rain memory and framebuffer properties, and any storage node. Both Rain
+  shim builders run the payload preflight before embedding a kernel.
+- The Rain tests check identity, storage exclusion, memory reservations,
+  payload bounds, boot-image round-trip, and rejected placement mismatches.
 - `.github/workflows/xnu.yml` has a `rain` device selection that stops the
   patch series at 0082. Topaz's 0083–0106 touch, PMIC and display MMIO changes
   remain in the Topaz build only. For Rain, `tools/rewrite_rain_xnu_patch.py`
@@ -72,6 +84,14 @@ Power-button hold returned the phone to Android; ADB confirmed boot completed
 on slot A. The reset code now shows a manual recovery hint if PSCI/PSHOLD
 return, but that revision has not been device-tested.
 
+After this diagnostic boot, a read-only Android memory audit found the high
+reservation described above. The source now uses the smaller 1 GiB Rain
+window. The live `/proc/iomem` checker accepted it, 14 Rain tests passed, and
+the revised shim rebuilt offline. Neither the revised shim nor an XNU payload
+using the new memory window has been booted on the phone. The offline boot
+candidate is `shim/out/shim-boot.img` (15,941,632 bytes, SHA-256
+`804b06a70f5d83c809fff96bf7a652cbbbcac8ac1285ff140e3f7561d0d9af89`).
+
 ## Remaining gates before XNU / iOS boot
 
 1. Reconcile hardcoded 1080×2400 framebuffer and touch values in inherited XNU
@@ -80,8 +100,11 @@ return, but that revision has not been device-tested.
    userland display presentation remain inherited. The copied tree has no XNU
    binary or iPhone X `/product` device tree. Rain's macOS CI has not been run.
 2. Validate an XNU kernel build on a macOS runner, then create a matching
-   payload for the shim. Check memory placement, early console and the panel
-   path before connecting storage or trying iOS userland.
+   payload for the shim. Repeat `tools/check_rain_memory.py` on the live
+   Android boot, check memory placement, early console and the panel path
+   before connecting storage or trying iOS userland. This workspace has no
+   XNU 8796 build, configured Git remote, or macOS runner; the user does not
+   yet have a GitHub repository for the Actions workflow.
 3. Implement and test Rain's Focaltech SPI touch and key services using the
    observed driver, GPIO and PMIC data. The Topaz touch driver and MDP timings
    are device-specific and remain excluded.

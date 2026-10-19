@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 from pack_rain_boot import pack
+from validate_rain_payload import validate as validate_payload
 
 ROOT = Path(__file__).resolve().parents[1]
 SHIM = ROOT / 'shim'
@@ -73,9 +74,13 @@ def build(llvm_bin, output, stock_boot, vendor_boot, payload=None):
         raise ValueError('ELF load data exceeds declared Image size')
     data.extend(bytes(ends[0] - len(data)))
     if payload:
+        payload_bytes = payload.read_bytes()
+        validate_payload(payload_bytes)
         data.extend(bytes((-len(data)) % 4096))
-        data.extend(payload.read_bytes())
+        data.extend(payload_bytes)
         struct.pack_into('<Q', data, 16, len(data))
+    if len(data) > 0x8000000:
+        raise ValueError('shim Image exceeds loader size limit')
     if data[56:60] != b'ARM\x64' or struct.unpack_from('<Q', data, 16)[0] != len(data):
         raise ValueError('invalid shim ARM64 Image header')
     image_file.write_bytes(data)

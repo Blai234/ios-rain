@@ -12,6 +12,9 @@ import adt  # noqa: E402
 # Kernel-managed RAM: above every Qualcomm XPU carve-out (see NOTES.md)
 PHYS_BASE = 0xb0000000
 MEM_SIZE = 0x4d000000
+# Rain's Android /proc/iomem reserves 0xf3c00000-0xffbfffff at boot.
+# End the early XNU window at 0xf0000000, leaving 60 MiB of headroom.
+RAIN_MEM_SIZE = 0x40000000
 # --highmem (phone only): the whole upper DDR bank. The topaz live FDT memory
 # node is <0x40000000 0x3bb00000>, <0x80000000 3G>, <0x1_40000000 4G>; every
 # fixed reserved-memory carve-out is below 0x63900000 and the dynamic pools are
@@ -77,8 +80,9 @@ def build(seed=None, qemu=False, highmem=False, native=False, rain=False):
         raise ValueError('rain has no 0x140000000 upper DDR bank; --highmem is unsafe')
     # Redmi 10C (rain) and Note 12 (topaz) share Khaje's GIC and UFS MMIO,
     # but rain's panel and memory layout differ. The low RAM window is inside
-    # rain's live /memory range and above its fixed reserved-memory regions.
-    phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
+    # rain's live /memory range, below its observed high RAM reservation.
+    phys_base, mem_size = ((HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else
+                           (PHYS_BASE, RAIN_MEM_SIZE if rain else MEM_SIZE))
     fb_w, fb_h = (720, 1650) if rain else (FB_W, FB_H)
     ecid = 0x5241494e00000001 if rain else SWEET_ECID
     board = 'rain' if rain else 'topaz'

@@ -6,6 +6,8 @@ The Rain workspace is `C:\Users\Blai\Downloads\ios-rain-port\ios-topaz-topaz`.
 `RAIN-PORT.md` has the detailed device facts, code changes and open gates.
 Local commits: `a14314b` (Topaz baseline), `8bc08a5` (initial Rain
 configuration), `421deeb` (LLVM boot-v3 diagnostic and observed phone boot).
+`1085f15` recorded the recovery handoff; the current commit added Rain payload
+bounds and corrected the RAM window after the live reserved-memory audit.
 `tools/mkadt.py --rain` emits a storage-free ADT; the Rain shim excludes the
 UFS probe executable code. The inherited Topaz writable UFS path previously
 damaged its LUN0 GPT and must stay disabled on Rain.
@@ -22,6 +24,21 @@ clipped at right; Rain's console scale and reset hint were improved in source,
 but this revised image has not been booted. Seven tests pass.
 The 13 small recovery partitions are in ignored `backup/rain-2026-10-19/` and
 all 563,347,456 bytes were SHA-256 verified. Keep these private.
+
+**Memory correction and payload preflight:** Android's live `/proc/iomem`
+reserves `0xf3c00000–0xffbfffff`, overlapping Rain's former XNU range
+`0xb0000000+0x4d000000`. That earlier range is invalid even though it fits
+the FDT `/memory` bank. Rain now uses `0xb0000000+0x40000000` (1 GiB), ending
+at `0xf0000000`; `tools/check_rain_memory.py` accepted this window against the
+current Android map. This reservation can move between boots, so rerun the
+check before a future XNU test. The shim now bounds embedded payloads to the
+ARM64 Image length and checks segment and ADT ranges. Both build paths run the
+Rain payload preflight. Fourteen Rain tests pass, and a revised boot image was
+built offline (SHA-256 `804b06a70f5d83c809fff96bf7a652cbbbcac8ac1285ff140e3f7561d0d9af89`)
+but has **not** been device-booted. A legacy XNU 4903 Mach-O was
+used only to smoke-test the packager offline; never boot it on this phone.
+There is no local XNU 8796 binary, configured Git remote, or macOS runner;
+the user does not yet have a GitHub repository to run Actions.
 
 The Rain XNU workflow selects patches through 0082 and has not been run. The
 copy lacks an XNU binary and D22AP Apple tree; early XNU framebuffer and touch

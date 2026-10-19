@@ -28,12 +28,16 @@ truncate -s "$size" out/Image
 # Ramdisk: an xnu payload (tools/mkpayload.py) if given as $1, else an empty
 # newc cpio (ABL dislikes a zero-size ramdisk on some builds) -> diagnostics.
 if [ -n "${1:-}" ]; then
-	# topaz ABL drops the v4 boot ramdisk: append the payload to the Image at
-	# the first 4K boundary after _end (loader.c) and grow image_size.
+	if [ "${TARGET:-topaz}" = rain ]; then
+		python3 ../tools/validate_rain_payload.py "$1"
+	fi
+	# Embed the payload after the shim: Topaz ABL drops the v4 boot ramdisk,
+	# and Rain keeps the verified stock v3 ramdisk. Grow ARM64 image_size.
 	truncate -s $(( (size + 0xfff) & ~0xfff )) out/Image
 	cat "$1" >> out/Image
 	python3 -c 'import os,struct,sys; f=open(sys.argv[1],"r+b"); f.seek(16); f.write(struct.pack("<Q", os.path.getsize(sys.argv[1])))' out/Image
 fi
+test "$(wc -c < out/Image)" -le 134217728 || { echo 'shim Image exceeds loader size limit' >&2; exit 1; }
 if [ "${TARGET:-topaz}" = rain ]; then
 	: "${RAIN_STOCK_BOOT:?set RAIN_STOCK_BOOT to the backed-up active boot image}"
 	: "${RAIN_STOCK_VENDOR_BOOT:?set RAIN_STOCK_VENDOR_BOOT to its matching vendor_boot image}"
