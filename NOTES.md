@@ -4,6 +4,8 @@
 
 The Rain workspace is `C:\Users\Blai\Downloads\ios-rain-port\ios-topaz-topaz`.
 `RAIN-PORT.md` has the detailed device facts, code changes and open gates.
+Local commits: `a14314b` (Topaz baseline), `8bc08a5` (initial Rain
+configuration), `421deeb` (LLVM boot-v3 diagnostic and observed phone boot).
 `tools/mkadt.py --rain` emits a storage-free ADT; the Rain shim excludes the
 UFS probe executable code. The inherited Topaz writable UFS path previously
 damaged its LUN0 GPT and must stay disabled on Rain.
