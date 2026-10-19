@@ -117,6 +117,41 @@ This is a temporary `fastboot boot`; nothing was flashed.
 
 ## Read-only UFS root and launchd panic, 2026-10-19
 
+`IMG_0144.jpeg` is the second temporary COW boot's result. It passed the
+`launchd_cache_loader` AMFI stop and launched further services, including
+`bluetoothuserd`, then printed repeated HFS B-tree `offset #0 invalid
+(0x0000)` errors for catalog (fileID 4) and attributes (fileID 8), followed
+by `hfs_mark_inconsistent`. The user confirmed this loop persists. This boot
+had `ufscow=1`, so its disk writes were volatile.
+
+Read-only recovery analysis found `/dev/block/sda16` is Rain's `userdata`
+(109,844,443,136 bytes, starts at UFS 4 KiB LBA `0x2b4c28`). The phone HFS
+header, catalog and attributes header nodes are structurally valid. All
+19,694 allocated catalog nodes have valid descriptors and record offsets;
+against the source sparse HFS image, only catalog nodes 0, 1 and 19693
+changed. The attributes tree has only node 0 allocated. On-disk damage does
+not explain the visible zero-node errors by itself. This does not prove the
+whole filesystem is sound; the current hypothesis is a runtime COW capacity
+or I/O issue. Samples are outside Git at
+`C:/Users/Blai/Downloads/rain-hfs-diagnostic/`.
+
+The revised Rain COW patch raises its cap to 512 MiB, reports each 64 MiB
+high-water mark, and returns all-overlaid reads from RAM without a physical
+UFS read. It still blocks physical UFS writes. This change needs a new macOS
+build and a temporary phone boot before its effect can be assessed.
+
+`IMG_0143.jpeg` confirms the first temporary Rain COW boot passed root mount
+and several launchd boot tasks. It stops at `launchd_cache_loader[22]`:
+`Unable to find AMFI`, exit namespace 7 subcode `0x1`, followed by panic.
+The inherited Sweet notes record this exact gate and
+`launchd_unsecure_cache=1` as its development workaround. The prepared
+`xnu/out-rain-ci/rain-cow-unsecure-cache-shim/shim-boot.img` appends only that
+argument to the preceding payload. SHA-256:
+`c4c429a2b8020dd121b6c96d56e9fc057b90d49b0ad5ddb09f7f3b35ed4e707c`.
+The command line retains `unentitled_ios_sim_launch=1 ufscow=1 rootrw=1`
+and omits `ufsrw`; preflight and boot-v3 packager passed. Its first phone
+test awaits FASTBOOT.
+
 The user's later `IMG_0142.jpeg` shows an independent physical read-write
 UFS boot (`SWEET UFS` says read-write, and persistent `SWEET LOG` starts).
 It panics again on `launchd` `CS_KILLED`, namespace 9 code `0xe`. The exact

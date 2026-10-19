@@ -2,6 +2,57 @@
 
 ## Rain iOS root milestone (2026-10-19, latest)
 
+`IMG_0144.jpeg` shows much later launchd/userspace activity (including
+`bluetoothuserd`) after the temporary `rain-cow-unsecure-cache-shim` boot,
+followed by repeating `hfs_swap_BTNode: offset #0 invalid (0x0000)` and
+`hfs_mark_inconsistent` on `iOSRoot`, for catalog fileID 4 and attributes
+fileID 8. The user confirmed the errors continue rapidly. No physical write
+was made by this boot. It is not yet known whether the 64 MiB COW bound or
+another runtime I/O fault causes this.
+
+For read-only diagnosis, `fastboot reboot recovery` entered MIUI recovery but
+had no usable ADB shell. A temporary `fastboot boot` of Romeo13card's
+OrangeFox R12.0_1 `OrangeFox-R12.0_1-Stable-fog.img` (134,217,728 bytes,
+GitHub release SHA-256
+`00c7b168f1353071ca16918184a2a571cbebe375c77570fba0a79e09cfcade7f`)
+returned send OKAY 2.807 s, boot OKAY 0.341 s; ADB reports recovery/root.
+On Rain, `userdata` resolves to `/dev/block/sda16` (109,844,443,136 bytes,
+starts at 4 KiB UFS LBA `0x2b4c28`). Only read-only `dd` samples were taken,
+outside Git at `C:/Users/Blai/Downloads/rain-hfs-diagnostic/`.
+The phone HFS volume header matches the 16 GiB source
+`C:/Users/Blai/Downloads/iosroot-nojrnl.simg` layout. Catalog and attributes
+header nodes are valid (8 KiB nodes, three records); the phone's 19,694
+allocated catalog nodes all pass descriptor and record-offset checks.
+Only catalog nodes 0, 1 and 19693 differ from the source; the attributes
+tree has only its header node allocated. Thus the repeated zero-node errors
+are not visible in the persistent catalog metadata sampled after reboot;
+they arise during this COW boot or from a subtler filesystem inconsistency.
+The previous persistent `SWEETLOG` area had no header.
+
+Revised Rain-only `0082-zrain-ufs-cow.patch`: raise the bounded RAM overlay
+from 64 to 512 MiB, print its high-water mark every 64 MiB, and serve a read
+request wholly covered by COW directly from RAM. This is a diagnostic next
+boot, not a confirmed fix. Run the Rain host checks and macOS Actions build,
+then prepare/verify a new temporary `fastboot boot` image. Keep physical UFS
+writes disabled. The phone is currently in temporary OrangeFox recovery.
+
+`IMG_0143.jpeg` is the first Rain **COW root** boot result. Temporary
+`fastboot boot` of `rain-cow-platform-shim/shim-boot.img` returned send OKAY
+0.471 s and boot OKAY 0.344 s. The screen shows `launchd` completed root
+mount, `finish-demo-restore`, `sysstatuscheck`, and `prng_seedctl` tasks, then
+`launchd_cache_loader[22]` aborted `Unable to find AMFI` (exit namespace 7
+subcode 0x1), causing a panic. The inherited Sweet notes identify this exact
+stage: `launchd_unsecure_cache=1` skips the signature/AMFI request.
+The next image `xnu/out-rain-ci/rain-cow-unsecure-cache-shim/shim-boot.img`
+changes only the payload command line by appending that argument. Its SHA-256
+is `c4c429a2b8020dd121b6c96d56e9fc057b90d49b0ad5ddb09f7f3b35ed4e707c`;
+the payload outside the 608-byte command-line field is byte-identical to the
+successful COW payload. Volatile-UFS preflight and boot-v3 packager passed.
+The phone returned to FASTBOOT as the single detected `rain` product;
+`fastboot boot` sent the new image in 0.473 s and booted it in 0.345 s.
+Awaiting a screen photo to determine the next userland result. No physical
+UFS write boot is needed.
+
 Update after `IMG_0142.jpeg`: the user independently booted a physical
 read-write UFS configuration (`SWEET UFS: ... read-write` and `SWEET LOG` on
 screen). It returned to the earlier `launchd` `CS_KILLED`, namespace 9 code
