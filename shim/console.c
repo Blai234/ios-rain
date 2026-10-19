@@ -5,10 +5,15 @@
 #include "console.h"
 #include "font.h"
 
+#ifdef RAIN
+#define SCALE		2	/* keep both 32-bit fields visible on a 720px panel */
+#define MARGIN		12
+#else
 #define SCALE		3
+#define MARGIN		24
+#endif
 #define CH_W		(8 * SCALE)
 #define CH_H		(16 * SCALE)
-#define MARGIN		24
 #define LABEL_COLS	8
 
 volatile uint32_t *con_fb = (volatile uint32_t *)FB_BASE;

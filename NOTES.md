@@ -2,23 +2,34 @@
 
 ## Local Rain handoff (2026-10-19)
 
-The supplied Topaz ZIP has been copied into this local Rain port workspace.
-`RAIN-PORT.md` contains the live Redmi 10C observations, the Rain source changes,
-and the remaining build and hardware gates. `tools/mkadt.py --rain` is a
-storage-free diagnostic ADT; `TARGET=rain shim/build.sh` is the matching shim
-configuration. No kernel or boot image has been built, and no phone boot or
-partition write has been attempted. The inherited Topaz writable UFS path is
-unsafe to exercise until its recorded GPT corruption is understood.
-The workflow now offers a Rain patch series ending at 0082, excluding later
-Topaz-specific touch, PMIC and MDP changes. The local source tests pass (3/3),
-and `shim/build.sh` passes Bash syntax checking. The connected device's 13
-small recovery partitions were read into ignored `backup/rain-2026-10-19/`;
-all 563,347,456 bytes were verified against its SHA-256 manifest. The phone
-remained booted in Android throughout.
-The Topaz branch was checked at upstream commit `0b78dc55a61e` and its newer
-patches 0103–0106 and README changes were copied with matching Git blob hashes.
-There is no local AArch64 cross compiler or accessible WSL distro; XNU CI and a
-shim build have not been run.
+The Rain workspace is `C:\Users\Blai\Downloads\ios-rain-port\ios-topaz-topaz`.
+`RAIN-PORT.md` has the detailed device facts, code changes and open gates.
+`tools/mkadt.py --rain` emits a storage-free ADT; the Rain shim excludes the
+UFS probe executable code. The inherited Topaz writable UFS path previously
+damaged its LUN0 GPT and must stay disabled on Rain.
+
+Host LLVM 22 built a Rain diagnostic shim and `tools/pack_rain_boot.py` wrapped
+it in the backed-up stock boot-v3 header and ramdisk. A temporary `fastboot boot`
+was accepted and executed: user photos `IMG_0125.jpeg` and `IMG_0126.jpeg` show
+Gold CPU handoff, red framebuffer text, 30 virtual timer interrupts, 10 SGI1
+interrupts, and `no SWEETXNU payload` (expected). No flash or partition write
+was done. The automatic timed reset was not observed; the red screen remained
+without USB enumeration until the user held Power for 15–20 seconds. ADB then
+confirmed normal Android boot completed on slot A. The first image's text
+clipped at right; Rain's console scale and reset hint were improved in source,
+but this revised image has not been booted. Seven tests pass.
+The 13 small recovery partitions are in ignored `backup/rain-2026-10-19/` and
+all 563,347,456 bytes were SHA-256 verified. Keep these private.
+
+The Rain XNU workflow selects patches through 0082 and has not been run. The
+copy lacks an XNU binary and D22AP Apple tree; early XNU framebuffer and touch
+patches initially assumed 1080×2400. The workflow now rewrites early console
+patches 0010 and 0012 for Rain's 0x5c000000, 720×1650, 2880-byte framebuffer;
+the rewritten diffs parse, but no XNU build has run. Later display and touch
+scaling still needs Rain adaptation before an iOS GUI boot.
+Live Android reports a 720×1650 FT8006S panel and Focaltech SPI `fts_ts`
+controller ID `0x8642`; see `RAIN-PORT.md`. The Topaz branch was checked at
+upstream commit `0b78dc55a61e`, and patches 0103–0106 were blob verified.
 
 ## Agent handoff / active work (2026-10-15, latest)
 

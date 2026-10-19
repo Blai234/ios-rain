@@ -111,8 +111,10 @@ static void __attribute__((noreturn)) reset(unsigned after_s)
 	delay_ms(after_s * 1000);
 	wr32(IMEM_RESTART_REASON, RESTART_BOOTLOADER);
 	__asm__ volatile("dsb sy" ::: "memory");
-	smc(PSCI_SYSTEM_RESET, 0, 0, 0);
+	uint64_t ret = smc(PSCI_SYSTEM_RESET, 0, 0, 0);
+	con_hex("PSCI_RESET", ret);
 	wr32(PSHOLD, 0);
+	con_str("RESET", "hold Power 20s to restart");
 	for (;;)
 		__asm__ volatile("wfe");
 }
@@ -511,13 +513,21 @@ void shim_main(uint64_t dtb)
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
 	stage = "loader";
 	con_clear(RED);
+#ifdef RAIN
+	con_str("SHIM", "rain diagnostic: xnu loader");
+#else
 	con_str("SHIM", "sweet milestone 4: xnu loader");
+#endif
 	/* topaz: xnu needs the 16K granule (TGran16 != 0); Cortex-A53 may lack it */
 	uint64_t mmfr0 = rsr("id_aa64mmfr0_el1");
 	con_hex2("MMFR0", "lo=", (uint32_t)mmfr0, "tg16=", (mmfr0 >> 20) & 0xf);
 	con_hex2("MIDR", "el1=", (uint32_t)rsr("midr_el1"), "mpidr=", (uint32_t)rsr("mpidr_el1"));
 	if (((mmfr0 >> 20) & 0xf) == 0) {
+#ifdef RAIN
+		con_str("SILVER", "no 16K; switch to gold CPU 0x100");
+#else
 		con_str("SILVER", "no 16K granule: handing off to gold CPU 0x100");
+#endif
 		con_skip();
 		silver_ticks = speed_ticks();
 		gold_dtb = dtb;

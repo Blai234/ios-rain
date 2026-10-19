@@ -68,7 +68,7 @@ jobs:
               cp "$p" dxb/patches/
             elif [ "$DEVICE" = rain ]; then
               case "$b" in
-                00[0-7][0-9]-*|008[0-2]-*) cp "$p" dxb/patches/ ;;
+                00[0-7][0-9]-*|008[0-2]-*) python3 tools/rewrite_rain_xnu_patch.py "$p" "dxb/patches/$b" ;;
               esac
             else
               echo "unsupported DEVICE: $DEVICE" >&2; exit 2
