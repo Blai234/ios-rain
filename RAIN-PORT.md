@@ -1,8 +1,12 @@
 # Redmi 10C (`rain`) port status — 2026-10-19
 
-This tree starts from the supplied `MakrSas/ios-topaz` `topaz` branch ZIP. Topaz
-itself derives from `dipa-studio/ios-sweet`. The Rain changes are an **early
+This tree starts from the supplied `MakrSas/ios-topaz` `topaz` branch ZIP
+(SHA-256 `ababa8319fb621e1941aac4c5cd306660a3b2ef01c25a1be433f13faffda87f2`).
+Topaz itself derives from `dipa-studio/ios-sweet`. The Rain changes are an **early
 hardware configuration**, not a working XNU or iOS build.
+The four upstream Topaz patch files 0103–0106 and its README updates were
+retrieved from commit `0b78dc55a61ea9c1a693192529a328dedcca31fc` and
+checked against GitHub's blob hashes. Rain's patch selection still ends at 0082.
 
 ## Live facts read from the connected phone
 
@@ -26,6 +30,9 @@ hardware configuration**, not a working XNU or iOS build.
 - `TARGET=rain shim/build.sh` selects Rain console dimensions, omits Topaz's
   unverified CPU frequency write, and disables the no-payload UFS probe.
 - `tests/test_rain_adt.py` checks the Rain invariants and Topaz defaults.
+- `.github/workflows/xnu.yml` has a `rain` device selection that stops the
+  patch series at 0082. Topaz's 0083–0102 touch, PMIC and display MMIO changes
+  remain in the Topaz build only.
 
 ## Remaining gates before a device boot
 
@@ -36,7 +43,7 @@ hardware configuration**, not a working XNU or iOS build.
 2. Obtain a build environment with an AArch64 cross compiler, `mkbootimg.py`,
    and a macOS XNU build runner. The copied source has no XNU binary or iPhone
    X `/product` device tree. Build and inspect a storage-free diagnostic image
-   before trying any iOS root.
+   before trying any iOS root. The `rain` CI selection has not been run.
 3. Identify Rain's touch controller, PMIC key wiring, panel scanout, and exact
    partition geometry from this device. Topaz FT5452, PM6125 and MDP settings
    cannot be assumed to apply.
@@ -46,6 +53,10 @@ hardware configuration**, not a working XNU or iOS build.
    storage node absent until this is resolved and all phone partitions are
    backed up. No `userdata` flash is part of this baseline.
 
-No reboot, fastboot boot, flash, partition write, or backup was performed during
-this Rain baseline. The USB reads were limited to Android properties, device
-tree nodes, CPU frequencies, display size, and interrupt counters.
+`tools/backup_rain.py` makes read-only local copies of small calibration and
+boot partitions in ignored `backup/`. It saved 13 partitions to
+`backup/rain-2026-10-19/` (563,347,456 bytes total); a second pass rehashed all
+images against `SHA256.json`. These include `persist`, both modem state copies,
+`fsg`, `fsc`, both boot and vendor_boot slots, both dtbo slots, and both vbmeta
+slots. Keep this directory private: calibration partitions may contain unique
+device data. No reboot, fastboot boot, flash, or partition write was performed.

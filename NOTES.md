@@ -9,6 +9,16 @@ storage-free diagnostic ADT; `TARGET=rain shim/build.sh` is the matching shim
 configuration. No kernel or boot image has been built, and no phone boot or
 partition write has been attempted. The inherited Topaz writable UFS path is
 unsafe to exercise until its recorded GPT corruption is understood.
+The workflow now offers a Rain patch series ending at 0082, excluding later
+Topaz-specific touch, PMIC and MDP changes. The local source tests pass (3/3),
+and `shim/build.sh` passes Bash syntax checking. The connected device's 13
+small recovery partitions were read into ignored `backup/rain-2026-10-19/`;
+all 563,347,456 bytes were verified against its SHA-256 manifest. The phone
+remained booted in Android throughout.
+The Topaz branch was checked at upstream commit `0b78dc55a61e` and its newer
+patches 0103–0106 and README changes were copied with matching Git blob hashes.
+There is no local AArch64 cross compiler or accessible WSL distro; XNU CI and a
+shim build have not been run.
 
 ## Agent handoff / active work (2026-10-15, latest)
 

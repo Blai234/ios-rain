@@ -12,11 +12,16 @@ on:
       machine_config:
         description: xnu MACHINE_CONFIG
         default: SWEET
+      device:
+        description: Device patch series (topaz or storage-free rain bring-up)
+        type: choice
+        options: [topaz, rain]
+        default: topaz
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
   push:
-    branches: [main]
+    branches: [main, rain]
     paths:
       - "xnu/patches/**"
       - ".github/workflows/xnu.yml"
@@ -31,6 +36,7 @@ env:
   MACOS_VERSION: ${{ inputs.macos_version || '13.5' }}
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
   MACHINE_CONFIG: ${{ inputs.machine_config || 'SWEET' }}
+  DEVICE: ${{ inputs.device || (github.ref_name == 'rain' && 'rain' || 'topaz') }}
   # ccache: xnu is ~2000 compiles; a patch usually changes a few of them
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_BASEDIR: ${{ github.workspace }}
@@ -54,7 +60,20 @@ jobs:
           git -C dxb fetch -q --depth 1 "$DXB_REPO" "$DXB_SHA"
           git -C dxb checkout -q FETCH_HEAD
           # 12.5-14.3 use the top-level patches dir; ours go next to blacktop's
-          cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
+          # Rain shares Khaje CPU fixes through 0082. Later patches directly
+          # program topaz touch, PMIC and MDP hardware and are not safe on rain.
+          for p in xnu/patches/*.patch xnu/patches/*.sh; do
+            b=${p##*/}
+            if [ "$DEVICE" = topaz ]; then
+              cp "$p" dxb/patches/
+            elif [ "$DEVICE" = rain ]; then
+              case "$b" in
+                00[0-7][0-9]-*|008[0-2]-*) cp "$p" dxb/patches/ ;;
+              esac
+            else
+              echo "unsupported DEVICE: $DEVICE" >&2; exit 2
+            fi
+          done
           # libfirehose_kernel is built arm64e-only; the SWEET kernel is plain arm64.
           # topaz: Cortex-A53/A73 (ARMv8.0), so the same -mcpu as the kernel
           # (clang's apple-m1 default emits LSE atomics and LDAPR)
@@ -90,9 +109,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-${{ hashFiles('xnu/patches/**', '.github/workflows/xnu.yml') }}
+          key: ccache-${{ env.DEVICE }}-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-${{ hashFiles('xnu/patches/**', '.github/workflows/xnu.yml') }}
           restore-keys: |
-            ccache-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-
+            ccache-${{ env.DEVICE }}-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-
 
       - name: Build
         working-directory: dxb
