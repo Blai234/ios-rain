@@ -117,6 +117,26 @@ This is a temporary `fastboot boot`; nothing was flashed.
 
 ## Read-only UFS root and launchd panic, 2026-10-19
 
+The user's later `IMG_0142.jpeg` shows an independent physical read-write
+UFS boot (`SWEET UFS` says read-write, and persistent `SWEET LOG` starts).
+It panics again on `launchd` `CS_KILLED`, namespace 9 code `0xe`. The exact
+boot image and command line were not supplied, so the missing platform boot
+argument is a likely explanation based on the earlier A/B test, not a
+verified property of this image. Do not repeat physical-write boots while
+the inherited Topaz GPT damage risk remains unresolved.
+
+The Rain COW kernel build actually succeeded in Actions run `39281892841`
+at commit `3212edb`. Artifact ZIP digest is
+`38f127d532856d18ede50b861cd2f39eca61a79e6953578d1b7ad3666e376f7e`;
+kernel digest matches its Actions manifest:
+`edda2c82c972ef4c0f50ca06a505d0d3d05416feae7ac4f36995ae8db2a9f9a1`.
+The prepared temporary COW image
+`xnu/out-rain-ci/rain-cow-platform-shim/shim-boot.img` is 21,929,984 bytes,
+SHA-256 `0015d8ba34083b637171607f1185f6dcde0eb41f52a80191bd56d7f189b4802f`.
+Its cmdline includes `unentitled_ios_sim_launch=1 ufscow=1 rootrw=1`, with no
+`ufsrw`. The image passed the Rain volatile-UFS preflight and host boot-image
+round-trip. It is awaiting a temporary `fastboot boot` test.
+
 The user's `IMG_0137.jpeg` and `IMG_0138.jpeg` show a later temporary XNU
 boot that found `userdata` through the UFS driver in **read-only** mode,
 mounted `iOSRoot` as HFS, and attempted to load `/sbin/launchd`. The panic is
@@ -145,12 +165,10 @@ substitutes them on later reads. It refuses physical UFS data-out commands
 in this mode and disables the persistent partition log. `rootrw=1` allows
 HFS to mount writable against that volatile device. The preflight requires
 both arguments and rejects `ufsrw`; 19 Rain tests pass. The patch applies to
-the selected 0082 UFS source, but no kernel build or phone boot has yet
-validated it. Commit `3212edb` was pushed; Actions run `39281892841` is
-queued without a macOS runner during GitHub's October 19 `macos-14` brownout.
-The next step is to inspect that run and retry after 00:00 UTC if it fails,
-then build and test a temporary `ufscow=1 rootrw=1` image. Overlay contents
-disappear on reset.
+the selected 0082 UFS source. The kernel build passed, but its behavior on
+the phone remains untested. Commit `3212edb` was pushed; Actions run
+`39281892841` succeeded, and the next temporary boot image is prepared above.
+Overlay contents disappear on reset.
 
 ## Remaining gates before XNU / iOS boot
 
@@ -160,7 +178,7 @@ disappear on reset.
    userland display presentation remain inherited. The D22AP `/product`
    device tree has been extracted from Apple's iPhone X 16.7.16 restore image
    into ignored `research/ipsw-x/d22ap.adt`.
-2. Build and test the volatile UFS overlay, then work through the next
+2. Test the built volatile UFS overlay, then work through the next
    userland boot failure. Repeat the live memory preflight before future
    kernel placement changes.
 3. Implement and test Rain's Focaltech SPI touch and key services using the

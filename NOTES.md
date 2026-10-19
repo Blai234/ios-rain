@@ -2,6 +2,31 @@
 
 ## Rain iOS root milestone (2026-10-19, latest)
 
+Update after `IMG_0142.jpeg`: the user independently booted a physical
+read-write UFS configuration (`SWEET UFS: ... read-write` and `SWEET LOG` on
+screen). It returned to the earlier `launchd` `CS_KILLED`, namespace 9 code
+`0xe` panic. The exact boot image and arguments used were not supplied;
+the photo does not prove which platform argument was present. Avoid another
+physical-write boot while investigating, since the inherited Topaz driver
+has a recorded LUN0 GPT corruption incident.
+
+Actions run `39281892841` for `3212edb` ultimately **succeeded** despite
+the `macos-14` queue. Artifact `xnu-kernel` ID `12201541309` ZIP SHA-256
+`38f127d532856d18ede50b861cd2f39eca61a79e6953578d1b7ad3666e376f7e`
+matches GitHub's artifact digest. Its `kernel.development.sweet` is
+17,612,480 bytes, SHA-256
+`edda2c82c972ef4c0f50ca06a505d0d3d05416feae7ac4f36995ae8db2a9f9a1`,
+matching artifact `SHA256SUMS`; `ufscow` and `volatile RAM COW` strings exist.
+Using the unchanged `research/rain-ufs.adt`, the new payload
+`xnu/out-rain-ci/rain-cow-platform.payload` has boot args
+`rd=ufsroot0 unentitled_ios_sim_launch=1 ufscow=1 rootrw=1` alongside the
+existing debug arguments, **no `ufsrw`**. The volatile-UFS preflight accepts
+it. `tools/build_rain_shim.py --allow-volatile-ufs` produced
+`xnu/out-rain-ci/rain-cow-platform-shim/shim-boot.img` (21,929,984 bytes,
+SHA-256 `0015d8ba34083b637171607f1185f6dcde0eb41f52a80191bd56d7f189b4802f`).
+Host packager round-trip passed. The image has not been booted; waiting for
+the user to enter FASTBOOT with USB connected. Use only `fastboot boot`.
+
 GitHub repository `Blai234/ios-rain` has the `rain` branch. macOS XNU workflow
 run `39225824047` succeeded at commit `c4da78e`; the 17,612,192-byte kernel
 `xnu/out-rain-ci/kernel.development.sweet` matches Actions SHA-256
@@ -45,13 +70,9 @@ log thread is disabled. A reboot discards all COW data. This patch is Rain-only
 in the workflow. It applied cleanly to the selected 0082 source; the Rain
 preflight explicitly requires `ufscow=1 rootrw=1` and rejects `ufsrw`.
 Nineteen host Rain tests pass. Committed and pushed as `3212edb`; Actions run
-`39281892841` is queued for `macos-14` without an assigned runner as of
-2026-10-19 16:10 UTC. GitHub's published `macos-14` brownout is scheduled
-2026-10-19 14:00–20 Oct 00:00 UTC; jobs may fail or wait longer
-(https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/).
-The COW kernel has not yet built or run on the phone. Next: inspect the run;
-if it failed due the brownout, rerun after 00:00 UTC; then verify the artifact,
-make a `ufscow=1 rootrw=1` temporary boot image, and test it.
+`39281892841` succeeded and the kernel/artifact were verified above. The COW
+kernel has not yet run on the phone. Next: temporary boot of the prepared
+`ufscow=1 rootrw=1` image, then inspect its screen result.
 
 ## Rain userspace milestone (2026-10-19, latest)
 
