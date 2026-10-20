@@ -1,5 +1,26 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FT8006S SPI ID probe, repeated result — 2026-10-20
+
+The `fts7` image (CI 39478321979, commit `dceead7`) was built but never
+booted: its probe prints the id once, and the console scrolls that away
+within seconds (see `IMG_0174.jpeg`), so a photo could not read it.
+Commit `4c758a9` keeps the clock state, id read error, id/CRC bytes and
+the first eight raw reply bytes, and repeats them every 10 s for 3 min as
+`RAIN FTS: <stage> clk=.. vote=.. se0=.. id_err=.. id=.. crc=.. raw=.. irq=..`
+(stage `probe`, `clk-withheld`, `se-busy` or `geni-withheld`).
+CI 39492943599 built it; kernel SHA-256
+`9d85bc5bfe3e3d96f73c4e2a2ff4af72a0b29dd7d5e862cb28247a27254bd049` in
+`xnu/out-rain-ci/fts8/`. The touch-id image
+`xnu/out-rain-ci/fts8/rain-display-touch-id-shim/shim-boot.img`
+(SHA-256 `5c5f6c90ca8e6718b0ad9fb2b3355a36ed45355cad95cb01cd839cd4af08ea28`)
+was temporarily booted with `fastboot boot` (product `rain`, OKAY).
+Result pending the user's photo. Reading it: raw[3] is the Focaltech
+status byte (0xa0 bits set = rejected), raw[7] the first data byte.
+Expected in boot mode: id `86 32` with a matching CRC. The FT8006S is
+flashless (Android downloads 131072 bytes on every reset), so after the
+transport works the firmware loader is the next step before any touch.
+
 ## Rain FT8006S SPI pin/clock handoff — 2026-10-20
 
 `IMG_0173.jpeg`–`IMG_0175.jpeg` show the repeated read-only survey from
