@@ -116,6 +116,27 @@ therefore not only running, it is drawing, and the present path is
 copying its frames to the panel. The console is muted because the first
 swap happened, and the frame that arrived is the iOS boot logo.
 
+**Correction (2026-10-20, later).** The claim above is wrong. The
+*patched XNU source* in the CI build tree has
+`pexpert/pexpert/AppleBoot.h` ("appleboot.h - Apple logo shown during
+boot") with the logo bitmap inline, so the **kernel** draws the Apple
+logo during early boot. The kernel binary carries it, which is why the
+string search in the kernel found nothing: the bitmap is data, not a
+string.
+
+That changes what the logo proves. The logo on the panel is the kernel's
+own boot logo, so it says nothing about what the userland presented. The
+console is muted on the first `present()` call, which only needs a swap
+*record*; the copy itself may have been rejected (`src = 0`) or may have
+covered only a damage rectangle, leaving the logo visible.
+
+To see what the userland actually presents, the `SWEET FB: swap %u layer
+%u surface %u %ux%u ... b %d,%d %dx%d` lines are needed. They are
+printed by `present()` *after* the console is muted, so they are only
+visible in a boot without `sweetfb_noconsole=1` (the console variant).
+The `present()` log is limited to the first 16 swaps, so they scroll by
+early: the photo has to be taken in the first minute.
+
 **What this does not show.** The console is muted from the first swap on,
 and the persistent log is disabled in the volatile overlay mode, so the
 `AppleM2ScalerCSCDriver` line can no longer be read: the handoff confirms
