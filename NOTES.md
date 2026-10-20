@@ -1,5 +1,64 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain migration seed experiment (2026-10-20, latest)
+
+The 512 MiB COW / one-CPU temporary boot ran beyond the old capacity stop.
+`IMG_0154.jpeg` shows `SWEET UFS COW: 192 MiB allocated`, a live SpringBoard
+sampler, and more launched daemons without a panic or 512 MiB limit. The later
+`IMG_0155.jpeg` shows another service startup burst, then no new screen lines
+for over 30 minutes; the bar was static. `sweetfb_noconsole=1` was set, so the
+remaining console means no AppleCLCD swap happened. The cause of the stall is
+not yet proven.
+
+Read-only HFS catalog analysis of the phone's saved catalog found
+`/private/var/mobile/Library/Preferences` but no user
+`com.apple.migration.plist`; the sole file of that name is the unrelated
+`/System/Library/Preferences/Logging/Subsystems/com.apple.migration.plist`.
+The source sparse root's `SystemVersion.plist` confirms ProductBuildVersion
+`20H392`. The Rain ADT has `unique-chip-id`, `chip-id`, display scale 3 and a
+`/product` node. Inherited Sweet notes report that adding
+`LastSystemVersion=20H392` to the mobile migration preference stopped repeated
+first-boot migration. This makes migration a testable hypothesis here, not a
+confirmed explanation for Rain's present stall.
+
+Prepared Rain-only `xnu/patches/0082-zrain-migration-seed.patch`: when
+`rainseedmigration=1` **and** `ufscow=1` without `ufsrw`, just before launchd
+it creates the missing mobile preference in the volatile HFS overlay, writes
+`LastSystemVersion=20H392`, and assigns mobile uid/gid 501. The kernel prints
+open/write/attribute results. Without the boot arg it does nothing. It cannot
+run in a physical-write boot. The patch was generated against the successful
+`39299890390` buildtree and passes `git apply --check`; the Rain patch
+rewriter copies it byte-identically. Next: macOS Actions build, verify kernel,
+package temporary boot with the seed argument, then test on the phone. Do not
+flash a partition.
+
+## Rain COW capacity diagnosis (2026-10-19, latest)
+
+The one-CPU `sweetnull=SpringBoard sweetfb_noconsole=1` boot reached both
+`backboardd` and `SpringBoard` (`IMG_0151.jpeg` shows periodic `SMP` thread
+samples, `com.apple.datamigrator` AKS calls, and a `thermalmonitord` framebuffer
+call). The screen console stayed visible, so no AppleCLCD swap occurred. The
+later `IMG_0152.jpeg` gives the decisive failure:
+`SWEET UFS COW: 64 MiB limit reached` repeats while daemons continue to run.
+The current stall is therefore an exhausted volatile write overlay, not
+necessarily the missing `AppleM2ScalerCSCDriver` lookup. It does not prove
+the earlier four-CPU HFS corruption had the same cause, though it makes COW
+capacity a stronger suspect. Physical UFS writes remained disabled.
+
+The 512 MiB COW kernel from Actions run `39299890390` was packaged with the
+**same** one-CPU arguments as the image in `IMG_0152.jpeg`. Its embedded
+kernel matches SHA-256
+`f4d05445d1c1be0241d51e40db0e6339186df24f9549b4acfd6bb28dbc15d333`;
+the payload has the `512 MiB limit reached` marker and no 64 MiB marker.
+Temporary image:
+`xnu/out-rain-ci/rain-cow-512-cpu1-graphics-shim/shim-boot.img`,
+21,929,984 bytes, SHA-256
+`5f0aa35ad0bae9e6f535068bf259e533a237594855de5f94a7c0de3e18706f2f`.
+Volatile-UFS preflight and boot-v3 packaging passed. Verified FASTBOOT product
+`rain`; temporary `fastboot boot` returned send OKAY 0.456 s and boot OKAY
+0.343 s. Await screen result: assess whether it progresses, hits the new cap,
+or panics. Do not enable physical UFS writes.
+
 ## Rain single-CPU A/B milestone (2026-10-19, latest)
 
 `IMG_0145.jpeg` is a temporary `fastboot boot` of the same 64 MiB volatile

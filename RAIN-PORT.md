@@ -1,4 +1,27 @@
-# Redmi 10C (`rain`) port status — 2026-10-19
+# Redmi 10C (`rain`) port status — 2026-10-20
+
+## Latest stall and controlled migration test — 2026-10-20
+
+The 512 MiB volatile overlay boot passed the earlier 64 MiB limit.
+`IMG_0154.jpeg` shows 192 MiB allocated and additional daemons starting.
+`IMG_0155.jpeg` shows service startup continuing, then a static console for
+over 30 minutes with no panic or framebuffer swap. The cause is not yet
+established.
+
+The saved HFS catalog has the mobile Preferences directory but no
+`com.apple.migration.plist` there. A same-named file under
+`/System/Library/Preferences/Logging/Subsystems` is unrelated. The root
+reports ProductBuildVersion `20H392`; the Rain ADT has the UUID inputs and
+display identity. Sweet reached its first graphical setup after seeding
+`LastSystemVersion=20H392` in the mobile preference, so migration is a
+specific hypothesis to test.
+
+Rain-only `0082-zrain-migration-seed.patch` is a boot-argument-gated test:
+with `rainseedmigration=1 ufscow=1` and no `ufsrw`, it creates the mobile
+preference in RAM overlay before launchd, writes the build version, and
+reports each result. It does nothing without the argument and refuses a
+physical-write boot. It applies cleanly to the successful Rain buildtree;
+macOS build and phone test remain pending.
 
 This tree starts from the supplied `MakrSas/ios-topaz` `topaz` branch ZIP
 (SHA-256 `ababa8319fb621e1941aac4c5cd306660a3b2ef01c25a1be433f13faffda87f2`).
@@ -116,6 +139,27 @@ iPhone X identity). Command line:
 This is a temporary `fastboot boot`; nothing was flashed.
 
 ## Read-only UFS root and launchd panic, 2026-10-19
+
+`IMG_0151.jpeg` from a one-CPU diagnostic boot shows both `backboardd` and
+`SpringBoard` alive in the periodic kernel thread sampler, plus active
+`com.apple.datamigrator` and `thermalmonitord`. The console did not disappear
+with `sweetfb_noconsole=1`, so the first AppleCLCD swap had not occurred.
+`IMG_0152.jpeg` then shows the actual current loop: the volatile UFS COW
+overlay repeatedly reports **`64 MiB limit reached`**. Daemon writes are
+being refused. This is a confirmed capacity stop for this boot; it does not
+establish the cause of the earlier four-CPU HFS error loop. No physical UFS
+write was enabled.
+
+The 512 MiB COW kernel from successful Actions run `39299890390` has now
+been packaged with exactly the same one-CPU, quiet-output and framebuffer
+arguments. The prepared temporary image is
+`xnu/out-rain-ci/rain-cow-512-cpu1-graphics-shim/shim-boot.img` (21,929,984
+bytes, SHA-256
+`5f0aa35ad0bae9e6f535068bf259e533a237594855de5f94a7c0de3e18706f2f`).
+Its embedded kernel digest matches the Actions manifest, and its volatile-UFS
+preflight and boot-v3 packaging passed. Verified FASTBOOT product `rain`, then
+temporary `fastboot boot` returned send OKAY 0.456 s and boot OKAY 0.343 s.
+The screen outcome is pending; no partition was flashed.
 
 `IMG_0145.jpeg` is a one-variable A/B test of the 64 MiB COW boot:
 `cpus=4` was changed to `cpus=1`, with the same kernel, ADT, root, and other
