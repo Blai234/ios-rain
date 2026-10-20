@@ -15,7 +15,7 @@
 +					buf[c] = '\0';
 +					/* Rain diagnostic: preserve other backboardd output. */
 +					if (strcmp(name, "backboardd") == 0 &&
-+					    strstr(buf, "IOServiceMatchingFailed for: AppleM2ScalerCSCDriver") != NULL) {
++					    strnstr(buf, "IOServiceMatchingFailed for: AppleM2ScalerCSCDriver", c) != NULL) {
 +						int quiet = 0;
 +						PE_parse_boot_argn("rainquietscaler", &quiet, sizeof(quiet));
 +						if (quiet == 1) {

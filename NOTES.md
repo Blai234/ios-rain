@@ -30,7 +30,14 @@ backboardd alive in sampler output, still no swap. Prepared Rain-only
 `IOServiceMatchingFailed for: AppleM2ScalerCSCDriver` `/dev/null` echo and
 preserves its other messages. It does nothing without that argument. The
 patch applies to the prior successful buildtree and is copied unchanged by
-the Rain patch rewriter; it has not yet been built or run on the phone.
+the Rain patch rewriter. Its first CI build (`39381949629`) failed in the
+Build step; the public job page exposed only exit code 2 and the log connector
+did not return the text. The candidate used `strstr`, which is not found in
+the exported XNU kernel headers or local source; changed it to the kernel's
+used `strnstr` and added a seven-day build-log artifact to the workflow so a
+repeat failure is diagnosable. This revision has not yet been built or run on
+the phone. The phone ran out of battery during the seed diagnostic; charge it
+before any next live test. Its RAM overlay was temporary.
 
 The 512 MiB COW / one-CPU temporary boot ran beyond the old capacity stop.
 `IMG_0154.jpeg` shows `SWEET UFS COW: 192 MiB allocated`, a live SpringBoard
