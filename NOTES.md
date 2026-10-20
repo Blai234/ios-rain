@@ -1,5 +1,40 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain console A/B test (2026-10-20, latest)
+
+On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded
+by this Rain migration branch. The phone reported FASTBOOT product `rain`.
+The prepared `rain-nullfilter-shim/shim-boot.img` matched its documented SHA-256
+`5fde220c16836b7797daff18931a8d4f3f41f0d57892e4d454fb666220ba59ce`.
+`fastboot -s 778009e7 boot` returned send OKAY (0.472 s) and boot OKAY
+(0.388 s). This command loaded the image into RAM; no flash was issued.
+`IMG_0159.jpeg` shows a rapid loop of
+`|backboardd| IOServiceMatchingFailed for: AppleM2ScalerCSCDriver` after
+this boot. The requested filter did not suppress this message. The candidate
+kernel and payload contain the filter string and `rainquietscaler=1` boot
+argument, but the reason it did not match at runtime is not yet established.
+The message alone does not prove it is the gate to framebuffer swap.
+
+Prepared `tools/prepare_rain_quiet_tee.py` to change only the existing
+`sweetnull` boot argument from `backboardd,SpringBoard` to `SpringBoard`.
+The resulting `xnu/out-rain-ci/rain-quiet-tee.payload` preserved all bytes
+outside the command-line field, kept `ufscow=1 rootrw=1 cpus=1` and the
+migration seed, and passed volatile-UFS preflight. The repackaged boot-v3
+image has SHA-256
+`c2da93e3d2f3c394950bf9f047792df6468874eb2ed770e81ed7e825d982d749`.
+Its shim Image differs from the nullfilter Image only in the embedded
+command line; the boot packager round-tripped its kernel and stock ramdisk.
+On verified FASTBOOT product `rain`, `fastboot boot` returned send OKAY
+(0.464 s) and boot OKAY (0.338 s); no partition flash was issued.
+
+`IMG_0160.jpeg` shows the repeated scaler line no longer flooding the
+console. SpringBoard and backboardd are alive in periodic `SMP` samples,
+and AKS messages continue. No `SWEET FB` swap or graphical handoff is
+visible yet. The live boot is still producing lines; observe it for a stable
+stop, COW limit or first swap before making another runtime change. The
+previous test ran out of battery, so power loss can erase its volatile overlay.
+
+
 ## Rain migration seed experiment (2026-10-20, latest)
 
 Commit `cab7a2e` passed macOS Actions build `39378328083`. The kernel artifact

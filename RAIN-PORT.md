@@ -1,5 +1,14 @@
 # Redmi 10C (`rain`) port status — 2026-10-20
 
+The verified Rain nullfilter image was temporarily booted on 2026-10-20:
+FASTBOOT product `rain`; send OKAY 0.472 s, boot OKAY 0.388 s. `IMG_0159.jpeg`
+shows its backboardd scaler message still flooding the console. A second
+temporary image changed only `sweetnull` to `SpringBoard`, preserved the
+volatile UFS overlay, and booted with send/boot OKAY. `IMG_0160.jpeg` shows
+periodic SpringBoard and backboardd samples and AKS activity without that
+flood. No display swap is visible. See `NOTES.md` for both candidate identities,
+verification, and the prior battery interruption.
+
 ## Latest stall and controlled migration test — 2026-10-20
 
 The gated migration kernel built successfully in macOS Actions run
