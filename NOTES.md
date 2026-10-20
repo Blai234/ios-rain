@@ -94,6 +94,37 @@ The only difference is `sweetfb_scale=1` in the scaled one. Test procedure:
 `tools/prepare_rain_display_test.py --image` rebuilds both, including the
 boot-v3 wrapper, from any kernel file.
 
+### First graphical handoff on Rain — 2026-10-20
+
+The crop image was booted on the phone. FASTBOOT reported product `rain`
+and `unlocked: yes`; `fastboot -s 778009e7 boot` returned send OKAY
+(0.466 s) and boot OKAY (0.387 s). Nothing was flashed. The phone left
+fastboot and stayed out of adb for the whole observation, which is the
+bare kernel running (not Android).
+
+`IMG_0161.jpeg` shows **the iOS boot Apple logo** on a black screen, with
+no console text at all. `sweetfb_noconsole=1` mutes the console on the
+first swapped frame, so the console is gone **because a frame was swapped
+to the panel**. This is the first graphical handoff on Rain: until now
+every boot kept scrolling the console, which is the symptom of no swap.
+
+The logo sits at the centre of the panel, which is what the crop geometry
+predicts: the iOS canvas centre (562, 1218) maps to the panel centre
+(360, 825) with the crop offsets 202 and 393.
+
+**What this does not show.** The console is muted from the first swap on,
+and the persistent log is disabled in the volatile overlay mode, so the
+`AppleM2ScalerCSCDriver` line can no longer be read: the handoff confirms
+the canvas fix, but it does not confirm the scaler lookup directly. Any
+further boot that has to be diagnosed needs the console kept alive (leave
+`sweetfb_noconsole=1` out) or a way to read the log.
+
+**Next.** Photograph the screen again after a minute or two: the boot logo
+has to give way to the lock screen. If it does, the scaled image
+(`sweetfb_scale=1`) is the next test, to see the whole canvas instead of
+its centre crop. If the logo stays, the userland is stuck in the early
+boot and the console has to come back for the log.
+
 ## Rain console A/B test (2026-10-20, latest)
 
 On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded

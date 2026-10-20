@@ -33,6 +33,22 @@ the scaled
 `xnu/out-rain-ci/display/rain-display-scaled-shim/shim-boot.img` (SHA-256
 `aa3ce63f82a5850dda7a7caf487bd21622646c91ff54a2cfe4857ece20ea0c4f`).
 
+## First graphical handoff on Rain — 2026-10-20
+
+The crop image was booted on the phone (product `rain`, unlocked; send OKAY
+0.466 s, boot OKAY 0.387 s, nothing flashed). `IMG_0161.jpeg` shows the
+**iOS boot Apple logo** on a black screen with no console text: the console
+is muted on the first swapped frame, so a frame was swapped to the panel.
+Until now every Rain boot kept scrolling the console, which is the symptom
+of no swap. The canvas fix is the change that did it.
+
+The logo is centred, as the crop geometry predicts (canvas centre 562x1218
+maps to panel centre 360x825 with the crop offsets 202 and 393).
+
+Not shown: the `AppleM2ScalerCSCDriver` line, because the console is muted
+from the first swap and the persistent log is off in the volatile overlay
+mode. Next: the lock screen, then the scaled image for the full canvas.
+
 The verified Rain nullfilter image was temporarily booted on 2026-10-20:
 FASTBOOT product `rain`; send OKAY 0.472 s, boot OKAY 0.388 s. `IMG_0159.jpeg`
 shows its backboardd scaler message still flooding the console. A second
