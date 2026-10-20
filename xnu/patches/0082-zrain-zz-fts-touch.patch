@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,724 @@
+@@ -0,0 +1,763 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -170,7 +170,13 @@ index 0000000..db48221
 +	uint32_t fw, status, pin_cfg[11];
 +	uint32_t active;
 +	int x[FTS_MAX_TOUCH], y[FTS_MAX_TOUCH];
-+} st;
++	/* What the transport saw, repeated later so a photo can catch it. */
++	int clk;                     /* -1 not tried, 0 withheld, 1 ready */
++	uint32_t gcc_vote, gcc_se0;
++	int id_err;                  /* -1 not tried */
++	uint8_t raw[8];              /* the first reply bytes of the last read */
++	uint8_t id[4];               /* the id pair and its CRC */
++} st = { .clk = -1, .id_err = -1 };
 +static int fts_sleep_chan;
 +
 +static uint32_t
@@ -261,6 +267,7 @@ index 0000000..db48221
 +{
 +	uint32_t rcg = FTS_GCC_SE0_RCG;
 +	uint32_t dfs = fts_rd(st.gcc, rcg + 0x14u);
++	st.clk = 0;
 +	uint32_t cfg = fts_rd(st.gcc, rcg + (dfs & 1u ? 0x1cu : 4u));
 +	printf("RAIN FTS: GCC before vote=%#x dfs=%#x cfg=%#x\n",
 +	    fts_rd(st.gcc, FTS_GCC_VOTE), dfs, cfg);
@@ -286,13 +293,17 @@ index 0000000..db48221
 +	for (unsigned n = 0; n < 5000u; n++) {
 +		if (!(fts_rd(st.gcc, FTS_GCC_SE0_CBCR) & (1u << 31)) &&
 +		    !(fts_rd(st.gcc, FTS_GCC_CORE_CBCR) & (1u << 31))) {
++			st.gcc_vote = fts_rd(st.gcc, FTS_GCC_VOTE);
++			st.gcc_se0 = fts_rd(st.gcc, FTS_GCC_SE0_CBCR);
++			st.clk = 1;
 +			printf("RAIN FTS: GCC ready vote=%#x se0=%#x\n",
-+			    fts_rd(st.gcc, FTS_GCC_VOTE),
-+			    fts_rd(st.gcc, FTS_GCC_SE0_CBCR));
++			    st.gcc_vote, st.gcc_se0);
 +			return true;
 +		}
 +		fts_pause();
 +	}
++	st.gcc_vote = fts_rd(st.gcc, FTS_GCC_VOTE);
++	st.gcc_se0 = fts_rd(st.gcc, FTS_GCC_SE0_CBCR);
 +	printf("RAIN FTS: GCC branches halted; SPI withheld\n");
 +	return false;
 +}
@@ -462,7 +473,9 @@ index 0000000..db48221
 +	buf[2] = (uint8_t)(len >> 8);
 +	buf[3] = (uint8_t)len;
 +	memset(&buf[4], 0, total - FTS_HEADER_LEN);
++	memset(reply, 0, sizeof(reply));
 +	error = fts_spi_xfer(buf, total, reply, total);
++	memcpy(st.raw, reply, sizeof(st.raw));
 +	if (error) {
 +		return error;
 +	}
@@ -499,6 +512,8 @@ index 0000000..db48221
 +
 +	memset(buf, 0, sizeof(buf));
 +	error = fts_read(&cmd, 1, buf, 2);
++	st.id_err = error;
++	memcpy(st.id, buf, sizeof(st.id));
 +	if (error) {
 +		printf("RAIN FTS: chip id read failed: %d\n", error);
 +		return;
@@ -586,6 +601,24 @@ index 0000000..db48221
 +	return 0;
 +}
 +
++/*
++ * The console scrolls the one-shot lines away within seconds once the
++ * userland logs, so repeat what the transport saw every ten seconds for
++ * three minutes.
++ */
++static void
++fts_repeat(const char *stage)
++{
++	for (unsigned n = 0; n < 18; n++) {
++		fts_sleep(10000);
++		printf("RAIN FTS: %s clk=%d vote=%#x se0=%#x id_err=%d id=%02x %02x crc=%02x%02x raw=%02x %02x %02x %02x %02x %02x %02x %02x irq=%#x\n",
++		    stage, st.clk, st.gcc_vote, st.gcc_se0, st.id_err,
++		    st.id[0], st.id[1], st.id[3], st.id[2],
++		    st.raw[0], st.raw[1], st.raw[2], st.raw[3],
++		    st.raw[4], st.raw[5], st.raw[6], st.raw[7], st.irq_last);
++	}
++}
++
 +static void
 +fts_thread(void *arg __unused, wait_result_t result __unused)
 +{
@@ -664,10 +697,13 @@ index 0000000..db48221
 +	    st.tx_width != 32u || st.rx_width != 32u ||
 +	    st.tx_depth < 4u || st.rx_depth < 4u) {
 +		printf("RAIN FTS: unexpected GENI protocol or FIFO; SPI withheld\n");
++		fts_repeat("geni-withheld");
 +		return;
 +	}
-+	if (!fts_clocks())
++	if (!fts_clocks()) {
++		fts_repeat("clk-withheld");
 +		return;
++	}
 +	/* The live qupv3_se0_spi_active pinctrl is qup0, no pull, 6 mA.
 +	 * On bengal/khaje GPIO 0..3 select qup0 with function 1. */
 +	for (unsigned pin = 0; pin < FTS_SPI_PIN_N; pin++)
@@ -679,13 +715,16 @@ index 0000000..db48221
 +	    fts_rd(st.tlmm, 0), fts_rd(st.tlmm, 3u * FTS_TLMM_STRIDE),
 +	    fts_rd(st.tlmm, FTS_RESET_GPIO * FTS_TLMM_STRIDE + 4u));
 +	fts_se_setup(4u); /* 19.2 MHz / 4 = 4.8 MHz */
-+	if (st.dead)
++	if (st.dead) {
++		fts_repeat("se-busy");
 +		return;
++	}
 +	fts_probe_id();
 +	int probe_only = 0;
 +	PE_parse_boot_argn("rainftsprobe", &probe_only, sizeof(probe_only));
 +	if (probe_only) {
 +		printf("RAIN FTS: one-shot probe complete; polling withheld\n");
++		fts_repeat("probe");
 +		return;
 +	}
 +
