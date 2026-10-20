@@ -31,6 +31,13 @@ current boot continue and compare a later photo/log. If services stop advancing
 or the COW overlay reaches its cap, investigate that specific failure before
 changing display code.
 
+The user stopped that run to charge the phone before its outcome was observed.
+Its volatile overlay was lost; do not count it as a completed migration or a
+confirmed timeout. On 2026-10-20 at approximately 14:42 Europe/Madrid, the same
+diagnostic image was booted again after confirming FASTBOOT product `rain`
+and rechecking its image SHA-256 above. Send OKAY 0.467 s, boot OKAY 0.346 s.
+This run is awaiting a later screen observation; no partition was flashed.
+
 ## Rain display geometry: the canvas/framebuffer mismatch (2026-10-20, latest)
 
 The phone has never swapped a frame to the panel: `sweetfb_noconsole=1` is set,
