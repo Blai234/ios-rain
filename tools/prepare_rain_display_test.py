@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Prepare the two Rain display-geometry test images.
+
+The Rain device tree now presents the iPhone X canvas (1125x2436) to the
+userland, which is what the kernel reports through GetDisplaySize. Without
+`sweetfb_scale=1` the kernel shows the centre crop of that canvas on the
+720x1650 panel; with it the canvas is resampled into the panel.
+
+The two images differ in one boot argument, so a phone test can tell which
+behaviour works. Nothing is flashed: the result is a temporary boot image.
+"""
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import adt  # noqa: E402
+import mkadt  # noqa: E402
+import mkpayload  # noqa: E402
+from validate_rain_payload import validate  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# The command line of the last Rain boot. rainquietscaler=1 is left out on
+# purpose: the AppleM2ScalerCSCDriver message has to stay visible to tell
+# whether the canvas fix removed the scaler lookup.
+CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress '
+           'rd=ufsroot0 unentitled_ios_sim_launch=1 ufscow=1 rootrw=1 '
+           'launchd_unsecure_cache=1 sweetnull=SpringBoard sweetfb_noconsole=1 '
+           'rainseedmigration=1')
+
+VARIANTS = (('crop', ''), ('scaled', ' sweetfb_scale=1'))
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def build_adt(path, seed=None):
+    """A Rain tree with the storage node the volatile overlay boot needs."""
+    tree = mkadt.build(seed=seed, rain=True, ufs=True)
+    blob = adt.serialize(tree)
+    path.write_bytes(blob)
+    return blob
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--kernel', type=Path, required=True,
+                        help='the kernel.development.sweet from the Rain CI build')
+    parser.add_argument('--outdir', type=Path, default=ROOT / 'xnu' / 'out-rain-ci')
+    parser.add_argument('--adt', type=Path, help='use this ADT instead of building one')
+    parser.add_argument('--stock-boot', type=Path,
+                        default=ROOT / 'backup' / 'rain-2026-10-19' / 'boot_a.img')
+    parser.add_argument('--stock-vendor-boot', type=Path,
+                        default=ROOT / 'backup' / 'rain-2026-10-19' / 'vendor_boot_a.img')
+    parser.add_argument('--llvm-bin', type=Path)
+    parser.add_argument('--image', action='store_true',
+                        help='also build the boot-v3 image for each variant')
+    args = parser.parse_args()
+
+    if not args.kernel.is_file():
+        parser.error(f'{args.kernel} missing; download the Rain CI kernel first')
+    args.outdir.mkdir(parents=True, exist_ok=True)
+    adt_path = args.adt or (args.outdir / 'rain-display.adt')
+    if args.adt:
+        adt_blob = args.adt.read_bytes()
+    else:
+        adt_blob = build_adt(adt_path)
+    print(f'ADT {adt_path}: {len(adt_blob)} bytes')
+
+    report = {'kernel': str(args.kernel), 'kernel_sha256': sha256(args.kernel.read_bytes()),
+              'adt': str(adt_path), 'adt_sha256': sha256(adt_blob), 'variants': {}}
+    for name, extra in VARIANTS:
+        cmdline = CMDLINE + extra
+        blob, info = mkpayload.build(args.kernel, adt_path, cmdline)
+        checks = validate(blob, allow_volatile_ufs=True)
+        payload = args.outdir / f'rain-display-{name}.payload'
+        payload.write_bytes(blob)
+        entry = {'command_line': cmdline, 'payload': str(payload),
+                 'payload_sha256': sha256(blob), 'payload_bytes': len(blob),
+                 'preflight': checks, 'info': {k: v for k, v in info.items() if k != 'segs'}}
+        if args.image:
+            entry['image'] = build_image(args, payload, name)
+        report['variants'][name] = entry
+        print(f'{name}: {payload} ({len(blob)} bytes) {entry["payload_sha256"]}')
+        print(f'  {cmdline}')
+    (args.outdir / 'rain-display-test.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(f'report: {args.outdir / "rain-display-test.json"}')
+
+
+def build_image(args, payload, name):
+    """Wrap the payload in a temporary boot-v3 image with the stock header."""
+    import build_rain_shim
+
+    outdir = args.outdir / f'rain-display-{name}-shim'
+    build_rain_shim.build(args.llvm_bin, outdir, args.stock_boot, args.stock_vendor_boot,
+                          payload, allow_volatile_ufs=True)
+    image = outdir / 'shim-boot.img'
+    return {'path': str(image), 'sha256': sha256(image.read_bytes()),
+            'bytes': image.stat().st_size}
+
+
+if __name__ == '__main__':
+    main()

@@ -51,6 +51,16 @@ class RainTreeTest(unittest.TestCase):
         disp = child(child(native, 'arm-io'), 'disp0')
         self.assertEqual(struct.unpack('<II', prop(disp, 'canvas-width') + prop(disp, 'canvas-height')), (1080, 2400))
 
+    def test_rain_storage_node_is_opt_in(self):
+        # The storage-free diagnostic boot has no storage node; the volatile
+        # overlay boot needs the observed host node to find the controller.
+        root = mkadt.build(seed=b'0' * 64, rain=True)
+        self.assertNotIn(b'sweet-ufs\0', [prop(n, 'name') for n in root.children])
+        with_ufs = mkadt.build(seed=b'0' * 64, rain=True, ufs=True)
+        ufs = child(with_ufs, 'sweet-ufs')
+        self.assertEqual(prop(ufs, 'reg'), struct.pack('<QQ', 0x04804000, 0x3000))
+        self.assertEqual(prop(ufs, 'compatible'), b'qcom,ufshc\0')
+
     def test_topaz_defaults_are_preserved(self):
         root = mkadt.build(seed=b'0' * 64)
         fb = child(root, 'sweet-fbcon')

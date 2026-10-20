@@ -75,10 +75,17 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False, native=False, rain=False):
-    """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
+def build(seed=None, qemu=False, highmem=False, native=False, rain=False, ufs=None):
+    """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
+
+    ufs=True adds the storage node to a Rain tree. The Rain default omits it
+    (the storage-free diagnostic boot); the volatile overlay boot needs it to
+    find the host controller, and the payload validator only accepts the
+    volatile mode with the observed node.
+    """
     if rain and highmem:
         raise ValueError('rain has no 0x140000000 upper DDR bank; --highmem is unsafe')
+    with_ufs = False if qemu else (ufs if ufs is not None else not rain)
     # Redmi 10C (rain) and Note 12 (topaz) share Khaje's GIC and UFS MMIO,
     # but rain's panel and memory layout differ. The low RAM window is inside
     # rain's live /memory range, below its observed high RAM reservation.
@@ -213,7 +220,7 @@ def build(seed=None, qemu=False, highmem=False, native=False, rain=False):
     ])
 
     # bsd/dev/sweet_ufs.c: the UFS host ABL leaves running (absolute physical reg).
-    ufs = node('sweet-ufs', [
+    ufs_node = node('sweet-ufs', [
         ph(),
         ('compatible', cstr('qcom,ufshc')),
         ('reg', u64(UFS, UFS_SIZE)),
@@ -250,15 +257,17 @@ def build(seed=None, qemu=False, highmem=False, native=False, rain=False):
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    # Rain bring-up omits the storage node. The inherited topaz UFS write path
-    # has caused GPT damage; root mounting must wait for a separately verified
-    # driver and device-specific partition backup.
-    ], [chosen, defaults, cpus, arm_io, fbcon, buttons] + product + ([] if qemu or rain else [ufs]))
+    # Rain bring-up omits the storage node by default. The inherited topaz UFS
+    # write path has caused GPT damage; root mounting must wait for a separately
+    # verified driver and device-specific partition backup. The volatile
+    # overlay boot asks for it explicitly (ufs=True).
+    ], [chosen, defaults, cpus, arm_io, fbcon, buttons] + product + ([ufs_node] if with_ufs else []))
 
 
 if __name__ == '__main__':
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv,
-                 native='--native' in sys.argv, rain='--rain' in sys.argv)
+                 native='--native' in sys.argv, rain='--rain' in sys.argv,
+                 ufs=True if '--ufs' in sys.argv else None)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:
