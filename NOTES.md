@@ -1,5 +1,28 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain touch survey boot reaches Hello; input still absent — 2026-10-20
+
+The verified TLMM-fix survey image (CI 39453715662, commit `429bcf7`,
+`xnu/out-rain-ci/fts5/rain-display-touch-shim/shim-boot.img`, SHA-256
+`dfdbc5cf9548046bb533256ef8ddace647c18698136b6cbc9e594759c42ec207`)
+was temporarily booted with `fastboot boot` on product `rain`. It uses
+`rainfts=1 sweetfb_scale=1` and neither `rainftstx=1` nor `rainftsrst=1`,
+so it only reads the TLMM and GENI registers. `IMG_0171.jpeg` shows the
+iOS Hello screen; the user reports taps and swipes still do nothing.
+The image therefore passed the earlier immediate-reboot failure, but the
+early `RAIN FTS` lines were painted over before a photo captured them.
+This boot did not attempt an SPI transfer or register a touch device, so
+the missing input is expected. It does not prove the GENI survey values.
+
+The patch now caches the one-time read-only survey and repeats a summary
+every ten seconds for three minutes so a later photo can capture the
+firmware/protocol/FIFO and GPIO values without re-reading potentially
+clock-gated MMIO. The Focaltech read framing has been corrected against
+Xiaomi's FT8006S source. Host parsing passes; the next CI build and
+temporary boot must verify this repeat output before `rainftstx=1` is
+enabled. The real touch path still needs a successful controller ID read,
+firmware download, report parsing, and HID event delivery.
+
 ## The touch driver rebooted the phone three times: the TLMM tiles — 2026-10-20
 
 Every touch boot ended with the phone rebooting into the recovery, and it
@@ -70,11 +93,11 @@ sequencer opcodes come from the upstream GENI SPI master.
 `xnu/patches/0082-zrain-zz-fts-touch.patch` adds `bsd/dev/sweet_fts.c`:
 it reports what the pinctrl and the GENI block look like **without**
 changing the SPI pin muxing (the ABL may have configured it already, and
-changing it blindly is not safe), pulses the reset, surveys the GENI block
-(the protocol and the FIFO depth and width) and reads the controller's boot
-id with the focaltech framing (a six byte header, three dummy bytes and a
-CRC-16/KERMIT over the payload). The driver runs on its own thread, is
-bounded everywhere, and is off unless `rainfts=1` is given.
+changing that blindly is unsafe). A reset requires `rainftsrst=1`, and a
+controller ID transfer requires `rainftstx=1`; neither is enabled in the
+read-only survey image. The Focaltech read frame has a four byte header,
+three dummy bytes, payload, and a CRC-16/KERMIT. The driver runs on its
+own thread and is off unless `rainfts=1` is given.
 
 `tools/check_rain_fts.py` parses the driver on the host with stub headers
 (`tools/xnu_stubs.h`), so a CI kernel build is not spent on a syntax error.

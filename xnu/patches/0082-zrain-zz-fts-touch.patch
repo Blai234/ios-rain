@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,503 @@
+@@ -0,0 +1,524 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -27,7 +27,7 @@ index 0000000..db48221
 + *
 + * Stage 1 is the transport and the controller identity:
 + *   - what the pinctrl and the GENI block look like right now,
-+ *   - the Focaltech SPI framing (a six byte header, three dummy bytes and
++ *   - the Focaltech SPI framing (a four byte header, three dummy bytes and
 + *     a CRC-16/KERMIT over the payload),
 + *   - the chip id read.
 + * The report parser and the firmware loader follow once the chip answers.
@@ -141,10 +141,10 @@ index 0000000..db48221
 +/* The Focaltech SPI framing. */
 +#define FTS_WRITE_CMD       0x00u
 +#define FTS_READ_CMD        0xa0u    /* 0x80 | DATA_CRC_EN */
-+#define FTS_HEADER_LEN      6u
++#define FTS_HEADER_LEN      4u
 +#define FTS_DUMMY_BYTES     3u
 +#define FTS_MAX_XFER        256u
-+#define FTS_CHIP_ID_REG     0x00u    /* the boot id register pair */
++#define FTS_CHIP_ID_REG     0x90u    /* FTS_CMD_READ_ID */
 +#define FTS_MAX_TOUCH       10u
 +
 +static struct {
@@ -152,6 +152,7 @@ index 0000000..db48221
 +	bool dead;
 +	uint32_t tx_depth, tx_width, rx_depth, rx_width;
 +	uint32_t irq_last;
++	uint32_t fw, status, pin_cfg[11];
 +} st;
 +static int fts_sleep_chan;
 +
@@ -224,6 +225,8 @@ index 0000000..db48221
 +	st.tx_width = (htx & TX_FIFO_WIDTH_MSK) >> TX_FIFO_WIDTH_SHFT;
 +	st.rx_depth = (hrx & RX_FIFO_DEPTH_MSK) >> RX_FIFO_DEPTH_SHFT;
 +	st.rx_width = (hrx & RX_FIFO_WIDTH_MSK) >> RX_FIFO_WIDTH_SHFT;
++	st.fw = fw;
++	st.status = status;
 +	printf("RAIN FTS: geni fw=%#x proto=%u status=%#x tx_fifo=%u/%u rx_fifo=%u/%u\n",
 +	    fw, proto, status, st.tx_depth, st.tx_width, st.rx_depth, st.rx_width);
 +	if (proto != PROTO_SPI) {
@@ -298,12 +301,17 @@ index 0000000..db48221
 +			n = 4;
 +		}
 +		/* Never overrun the FIFO: drain it first when it is full. */
-+		for (unsigned i = 0; i < 2000; i++) {
++		unsigned i;
++		for (i = 0; i < 2000; i++) {
 +			if (!(fts_rd(st.geni, SE_TX_COUNT) & TX_FIFO_WC_MSK)) {
 +				break;
 +			}
 +			fts_wr(st.geni, SE_TX_WM, 1u);
 +			fts_pause();
++		}
++		if (i == 2000) {
++			fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
++			return ETIMEDOUT;
 +		}
 +		for (unsigned i = 0; i < n; i++) {
 +			word |= (uint32_t)tx[sent + i] << (8u * i);
@@ -350,7 +358,7 @@ index 0000000..db48221
 +}
 +
 +/* The Focaltech framing: an address, a command, the length, three dummy
-+ * bytes and the payload. The write path is used by the firmware loader,
++ * bytes and the payload. The write path is reserved for the firmware loader,
 + * which comes with the report parser. */
 +static int fts_write(const uint8_t *data, unsigned len) __unused;
 +
@@ -358,9 +366,9 @@ index 0000000..db48221
 +fts_write(const uint8_t *data, unsigned len)
 +{
 +	uint8_t buf[FTS_MAX_XFER];
-+	unsigned total = FTS_HEADER_LEN + FTS_DUMMY_BYTES + len;
++	unsigned total = FTS_HEADER_LEN + FTS_DUMMY_BYTES + len - 1u;
 +
-+	if (total > FTS_MAX_XFER || len < 2) {
++	if (len < 2 || total > FTS_MAX_XFER) {
 +		return EIO;
 +	}
 +	buf[0] = data[0];
@@ -377,6 +385,7 @@ index 0000000..db48221
 +fts_read(const uint8_t *cmd, unsigned cmdlen, uint8_t *data, unsigned len)
 +{
 +	uint8_t buf[FTS_MAX_XFER];
++	uint8_t reply[FTS_MAX_XFER];
 +	unsigned total = FTS_HEADER_LEN + FTS_DUMMY_BYTES + len + 2u;
 +	int error;
 +
@@ -387,12 +396,15 @@ index 0000000..db48221
 +	buf[1] = FTS_READ_CMD;
 +	buf[2] = (uint8_t)(len >> 8);
 +	buf[3] = (uint8_t)len;
-+	memset(&buf[4], 0, FTS_DUMMY_BYTES);
-+	error = fts_spi_xfer(buf, total, data, len + 2u);
++	memset(&buf[4], 0, total - FTS_HEADER_LEN);
++	error = fts_spi_xfer(buf, total, reply, total);
 +	if (error) {
 +		return error;
 +	}
-+	/* The status byte of the answer is at the end of the header. */
++	if (reply[3] & 0xa0u) {
++		return EIO;
++	}
++	memcpy(data, &reply[FTS_HEADER_LEN + FTS_DUMMY_BYTES], len + 2u);
 +	return 0;
 +}
 +
@@ -448,24 +460,23 @@ index 0000000..db48221
 +	printf("RAIN FTS: geni=%#lx tlmm=%#lx\n", (unsigned long)st.geni,
 +	    (unsigned long)st.tlmm);
 +
-+	/* What the pinctrl looks like now: the ABL may have muxed the SPI
-+	 * pins for the touch already, and changing that blindly is not safe.
-+	 * The tiles of the TLMM are not laid out linearly on this SoC, so
-+	 * the address of a pin is not known here: only read for now. */
++	/* The ABL may have muxed the SPI pins already. Read the known WEST
++	 * tile addresses first; do not change any pin without the survey. */
 +	for (unsigned pin = FTS_SPI_PINS; pin < FTS_SPI_PINS + FTS_SPI_PIN_N; pin++) {
 +		cfg = fts_rd(st.tlmm, pin * FTS_TLMM_STRIDE);
++		st.pin_cfg[pin] = cfg;
 +		printf("RAIN FTS: gpio%u cfg=%#x function=%u pull=%u drive=%u out=%u\n",
 +		    pin, cfg, (cfg >> 2) & 0xf, cfg & 3, (cfg >> 6) & 7, (cfg >> 9) & 1);
 +	}
 +	for (unsigned pin = FTS_IRQ_GPIO; pin <= FTS_RESET_GPIO; pin++) {
 +		cfg = fts_rd(st.tlmm, pin * FTS_TLMM_STRIDE);
++		st.pin_cfg[4u + pin - FTS_IRQ_GPIO] = cfg;
 +		printf("RAIN FTS: gpio%u cfg=%#x function=%u pull=%u drive=%u out=%u\n",
 +		    pin, cfg, (cfg >> 2) & 0xf, cfg & 3, (cfg >> 6) & 7, (cfg >> 9) & 1);
 +	}
 +
-+	/* The reset line is active low. It is only pulsed when asked for:
-+	 * the pin address is not confirmed yet, and a write to the wrong
-+	 * TLMM register can cut a power rail. */
++	/* The reset line is active low. Only pulse it when explicitly asked;
++	 * the first survey and the Hello-screen boot must remain read-only. */
 +	int rst = 0;
 +	PE_parse_boot_argn("rainftsrst", &rst, sizeof(rst));
 +	if (rst) {
@@ -497,6 +508,16 @@ index 0000000..db48221
 +		printf("RAIN FTS: no transfer (rainftstx=1 to do it)\n");
 +	}
 +	printf("RAIN FTS: stage 1 done\n");
++	/* The userland soon paints over the early console. Repeat the cached
++	 * survey for a short time so a photo can capture it without touching
++	 * a clock-gated MMIO block again. This is a diagnostic-only boot. */
++	for (unsigned n = 0; n < 18; n++) {
++		fts_sleep(10000);
++		printf("RAIN FTS: cached fw=%#x status=%#x fifo=%u/%u,%u/%u gpio0=%#x gpio1=%#x gpio2=%#x gpio3=%#x irq80=%#x rst86=%#x\n",
++		    st.fw, st.status, st.tx_depth, st.tx_width, st.rx_depth,
++		    st.rx_width, st.pin_cfg[0], st.pin_cfg[1], st.pin_cfg[2],
++		    st.pin_cfg[3], st.pin_cfg[4], st.pin_cfg[10]);
++	}
 +}
 +
 +void

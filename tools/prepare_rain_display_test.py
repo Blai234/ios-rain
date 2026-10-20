@@ -54,7 +54,7 @@ CPUS4_CONSOLE_CMDLINE = CONSOLE_CMDLINE.replace('cpus=1', 'cpus=4')
 # rainfts=1 starts the FT8006S touch driver. Its stage 1 output (the
 # pinctrl, the GENI survey and the chip id) goes to the console, so it
 # needs a console boot to be read.
-TOUCH_CMDLINE = CONSOLE_CMDLINE + ' rainfts=1'
+TOUCH_CMDLINE = CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
