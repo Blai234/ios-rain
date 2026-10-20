@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,635 @@
+@@ -0,0 +1,724 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -90,6 +90,9 @@ index 0000000..db48221
 +#define SE_TX_COUNT      0x800u
 +#define SE_RX_COUNT      0x804u
 +#define SE_TX_WM         0x80cu
++#define SE_RX_WM         0x810u
++#define SE_RX_RFR_WM     0x814u
++#define SE_DMA_MODE      0x258u
 +#define SE_HW_TX         0xe24u
 +#define SE_HW_RX         0xe28u
 +
@@ -150,8 +153,17 @@ index 0000000..db48221
 +#define FTS_TOUCH_REG       0x01u    /* touch data starts here */
 +#define FTS_TOUCH_LEN       62u      /* 2 header + 60 point bytes */
 +
++/* Khaje GCC: wrap0's voted clocks and SE0 RCG (gcc-khaje.c). */
++#define FTS_GCC_PA       0x01400000u
++#define FTS_GCC_LEN      0x00080000u
++#define FTS_GCC_VOTE     0x0007900cu
++#define FTS_GCC_SE0_RCG  0x0001f148u
++#define FTS_GCC_VOTE_MASK 0x000007c0u /* AHB, core, core2x, SE0 */
++#define FTS_GCC_SE0_CBCR 0x0001f144u
++#define FTS_GCC_CORE_CBCR 0x0001f00cu
++
 +static struct {
-+	vm_offset_t geni, tlmm;
++	vm_offset_t geni, tlmm, gcc;
 +	bool dead;
 +	uint32_t tx_depth, tx_width, rx_depth, rx_width;
 +	uint32_t irq_last;
@@ -242,17 +254,65 @@ index 0000000..db48221
 +	}
 +}
 +
++/* Select the 19.2 MHz XO parent, enable only QUP0/SE0 clocks, and
++ * verify the voted branches before touching the serial sequencer. */
++static bool
++fts_clocks(void)
++{
++	uint32_t rcg = FTS_GCC_SE0_RCG;
++	uint32_t dfs = fts_rd(st.gcc, rcg + 0x14u);
++	uint32_t cfg = fts_rd(st.gcc, rcg + (dfs & 1u ? 0x1cu : 4u));
++	printf("RAIN FTS: GCC before vote=%#x dfs=%#x cfg=%#x\n",
++	    fts_rd(st.gcc, FTS_GCC_VOTE), dfs, cfg);
++	if (dfs & 1u) {
++		if ((cfg & 0x371fu) != 1u) {
++			printf("RAIN FTS: DFS level 0 is not XO/1; SPI withheld\n");
++			return false;
++		}
++	} else {
++		cfg = (cfg & ~(0x371fu | (1u << 20))) | 1u;
++		fts_wr(st.gcc, rcg + 4u, cfg);
++		fts_wr(st.gcc, rcg, fts_rd(st.gcc, rcg) | 1u);
++		unsigned n;
++		for (n = 0; n < 5000u && (fts_rd(st.gcc, rcg) & 1u); n++)
++			fts_pause();
++		if (n == 5000u) {
++			printf("RAIN FTS: SE0 RCG update timed out; SPI withheld\n");
++			return false;
++		}
++	}
++	fts_wr(st.gcc, FTS_GCC_VOTE,
++	    fts_rd(st.gcc, FTS_GCC_VOTE) | FTS_GCC_VOTE_MASK);
++	for (unsigned n = 0; n < 5000u; n++) {
++		if (!(fts_rd(st.gcc, FTS_GCC_SE0_CBCR) & (1u << 31)) &&
++		    !(fts_rd(st.gcc, FTS_GCC_CORE_CBCR) & (1u << 31))) {
++			printf("RAIN FTS: GCC ready vote=%#x se0=%#x\n",
++			    fts_rd(st.gcc, FTS_GCC_VOTE),
++			    fts_rd(st.gcc, FTS_GCC_SE0_CBCR));
++			return true;
++		}
++		fts_pause();
++	}
++	printf("RAIN FTS: GCC branches halted; SPI withheld\n");
++	return false;
++}
++
 +/* Put the serial engine into FIFO mode with the SPI parameters set. */
 +static void
 +fts_se_setup(uint32_t speed_div)
 +{
 +	uint32_t val;
 +
-+	/* Stop the sequencers and clear every interrupt. */
++	/* An idle GENI engine is required before changing FIFO parameters. */
++	if (fts_rd(st.geni, SE_STATUS) & 1u) {
++		printf("RAIN FTS: GENI command still active; SPI withheld\n");
++		st.dead = true;
++		return;
++	}
 +	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
-+	fts_wr(st.geni, SE_CTRL, M_CMD_CANCEL);
-+	fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
-+	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++	fts_wr(st.geni, SE_DMA_MODE, fts_rd(st.geni, SE_DMA_MODE) & ~1u);
++	fts_wr(st.geni, SE_RX_WM, 0);
++	fts_wr(st.geni, SE_RX_RFR_WM, st.rx_depth - 2u);
 +
 +	/* The SPI parameters: mode 0, chip select 0, eight bit words. */
 +	fts_wr(st.geni, SE_SPI_LOOPBACK, 0);
@@ -407,6 +467,8 @@ index 0000000..db48221
 +		return error;
 +	}
 +	if (reply[3] & 0xa0u) {
++		printf("RAIN FTS: read addr=%02x status=%02x raw=%02x %02x %02x %02x\n",
++		    cmd[0], reply[3], reply[4], reply[5], reply[6], reply[7]);
 +		return EIO;
 +	}
 +	memcpy(data, &reply[FTS_HEADER_LEN + FTS_DUMMY_BYTES], len + 2u);
@@ -537,8 +599,9 @@ index 0000000..db48221
 +	}
 +	st.geni = ml_io_map(FTS_GENI_PA, FTS_GENI_LEN);
 +	st.tlmm = ml_io_map(FTS_TLMM_PA, FTS_TLMM_LEN);
-+	if (st.geni == 0 || st.tlmm == 0) {
-+		printf("RAIN FTS: cannot map the GENI SPI or the TLMM\n");
++	st.gcc = ml_io_map(FTS_GCC_PA, FTS_GCC_LEN);
++	if (st.geni == 0 || st.tlmm == 0 || st.gcc == 0) {
++		printf("RAIN FTS: cannot map GENI, TLMM or GCC\n");
 +		return;
 +	}
 +	printf("RAIN FTS: geni=%#lx tlmm=%#lx\n", (unsigned long)st.geni,
@@ -597,8 +660,34 @@ index 0000000..db48221
 +		return;
 +	}
 +
-+	fts_se_setup(4u);
++	if ((st.fw & FW_REV_PROTOCOL_MSK) >> FW_REV_PROTOCOL_SHFT != PROTO_SPI ||
++	    st.tx_width != 32u || st.rx_width != 32u ||
++	    st.tx_depth < 4u || st.rx_depth < 4u) {
++		printf("RAIN FTS: unexpected GENI protocol or FIFO; SPI withheld\n");
++		return;
++	}
++	if (!fts_clocks())
++		return;
++	/* The live qupv3_se0_spi_active pinctrl is qup0, no pull, 6 mA.
++	 * On bengal/khaje GPIO 0..3 select qup0 with function 1. */
++	for (unsigned pin = 0; pin < FTS_SPI_PIN_N; pin++)
++		fts_gpio(pin, 1u, 0u, 2u, false, false);
++	/* The controller reset is active low; release it without a pulse. */
++	fts_gpio(FTS_RESET_GPIO, 0u, 1u, 3u, true, true);
++	fts_sleep(30);
++	printf("RAIN FTS: SPI pins muxed gpio0=%#x gpio3=%#x reset-io=%#x\n",
++	    fts_rd(st.tlmm, 0), fts_rd(st.tlmm, 3u * FTS_TLMM_STRIDE),
++	    fts_rd(st.tlmm, FTS_RESET_GPIO * FTS_TLMM_STRIDE + 4u));
++	fts_se_setup(4u); /* 19.2 MHz / 4 = 4.8 MHz */
++	if (st.dead)
++		return;
 +	fts_probe_id();
++	int probe_only = 0;
++	PE_parse_boot_argn("rainftsprobe", &probe_only, sizeof(probe_only));
++	if (probe_only) {
++		printf("RAIN FTS: one-shot probe complete; polling withheld\n");
++		return;
++	}
 +
 +	/* Try to read the app-mode firmware version: a non-zero reply means
 +	 * the controller has firmware loaded and will produce touch reports. */

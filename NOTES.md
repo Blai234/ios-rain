@@ -1,5 +1,24 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FT8006S SPI pin/clock handoff — 2026-10-20
+
+`IMG_0173.jpeg`–`IMG_0175.jpeg` show the repeated read-only survey from
+the temporary Rain boot: `fw=0x102`, `status=0`, TX FIFO 16x32 bits,
+RX FIFO 32x32 bits, GPIO0–3 each `cfg=0x3`, GPIO80 `0`, GPIO86 `0x2c0`.
+The serial engine contains SPI firmware (protocol 1), but GPIO0–3 are
+still in GPIO function 0 with pull 3. The touchscreen remains inert; this
+survey image performed no SPI transactions and did not register input.
+
+The next candidate adds a guarded SE0 clock vote and XO/1 source setup,
+switches GPIO0–3 to qup0 function 1 (6 mA, no pull, per the live
+`qupv3_se0_spi_active` node), releases reset high, and makes one bounded
+Focaltech ID read. `rainftsprobe=1` returns after that read, keeping the
+touch poll off. Qualcomm's `gcc-khaje.c` confirms GCC base 0x1400000,
+vote 0x7900c bits 6–10, SE0 RCG 0x1f148, and branch 0x1f144.
+The source was downloaded to ignored `research/gcc-khaje.c` for review.
+This candidate still needs CI compilation and a physical temporary boot;
+it is not a verified touch fix. Firmware loading and end-to-end HID remain.
+
 ## Rain touch survey boot reaches Hello; input still absent — 2026-10-20
 
 The verified TLMM-fix survey image (CI 39453715662, commit `429bcf7`,

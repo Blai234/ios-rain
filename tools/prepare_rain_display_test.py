@@ -56,6 +56,7 @@ CPUS4_CONSOLE_CMDLINE = CONSOLE_CMDLINE.replace('cpus=1', 'cpus=4')
 # driver's diagnostic output readable.
 TOUCH_CMDLINE = CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1'
 TOUCH_QUIET_CMDLINE = CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1'
+TOUCH_ID_CMDLINE = CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainftsprobe=1'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -63,6 +64,7 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('cpus4', CPUS4_CMDLINE),
             ('cpus4console', CPUS4_CONSOLE_CMDLINE),
             ('touch', TOUCH_CMDLINE),
+            ('touch-id', TOUCH_ID_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 
