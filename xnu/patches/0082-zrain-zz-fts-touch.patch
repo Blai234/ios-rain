@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,763 @@
+@@ -0,0 +1,813 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -72,7 +72,11 @@ index 0000000..db48221
 +
 +/* The GENI serial engine register map. It is the same map Sweet's SE7 I2C
 + * engine uses, so the offsets and the byte order carry over unchanged. */
++#define SE_FORCE_DEFAULT 0x020u
++#define SE_OUTPUT_CTRL   0x024u
++#define SE_CGC_CTRL      0x028u
 +#define SE_STATUS        0x040u
++#define SE_IF_DISABLE    0x064u
 +#define SE_MCLK          0x048u
 +#define SE_FW            0x068u
 +#define SE_CLK_SEL       0x07cu
@@ -93,6 +97,10 @@ index 0000000..db48221
 +#define SE_RX_WM         0x810u
 +#define SE_RX_RFR_WM     0x814u
 +#define SE_DMA_MODE      0x258u
++#define SE_IOS           0x908u
++#define SE_GSI_EVENT_EN  0xe18u
++#define SE_IRQ_ROUTE     0xe1cu
++#define SE_DMA_GEN_CFG   0xe30u
 +#define SE_HW_TX         0xe24u
 +#define SE_HW_RX         0xe28u
 +
@@ -112,6 +120,13 @@ index 0000000..db48221
 +#define FW_REV_PROTOCOL_MSK  0xff00u
 +#define FW_REV_PROTOCOL_SHFT 8u
 +#define PROTO_SPI            1u
++#define FIFO_IF_DISABLE      0x00000001u
++#define DEFAULT_CGC_EN       0x0000007fu /* the AHB, serial, TX, RX, ext clocks */
++#define DEFAULT_IO_OUTPUT    0x0000007fu
++#define DMA_GEN_CGC_ON       0x0000000fu /* RX, TX, AHB slave, secure slave */
++#define GENI_M_IRQ_ROUTE     0x00000004u
++#define GENI_S_IRQ_ROUTE     0x00000008u
++#define DMA_IRQ_ROUTE        0x00000003u
 +#define M_CMD_DONE_EN        0x00000001u
 +#define M_RX_FIFO_WM_EN      0x04000000u
 +#define M_RX_FIFO_LAST_EN    0x08000000u
@@ -176,6 +191,8 @@ index 0000000..db48221
 +	int id_err;                  /* -1 not tried */
 +	uint8_t raw[8];              /* the first reply bytes of the last read */
 +	uint8_t id[4];               /* the id pair and its CRC */
++	uint32_t ifdis, cgc;          /* GENI_IF_DISABLE_RO and CGC_CTRL before init */
++	uint32_t snap[6];             /* status, m_irq, tx_fifo, rx_fifo, ios, clk_cfg */
 +} st = { .clk = -1, .id_err = -1 };
 +static int fts_sleep_chan;
 +
@@ -242,6 +259,7 @@ index 0000000..db48221
 +	uint32_t htx = fts_rd(st.geni, SE_HW_TX);
 +	uint32_t hrx = fts_rd(st.geni, SE_HW_RX);
 +	uint32_t status = fts_rd(st.geni, SE_STATUS);
++	st.ifdis = fts_rd(st.geni, SE_IF_DISABLE);
 +	uint32_t proto = (fw & FW_REV_PROTOCOL_MSK) >> FW_REV_PROTOCOL_SHFT;
 +
 +	st.tx_depth = (htx & TX_FIFO_DEPTH_MSK) >> TX_FIFO_DEPTH_SHFT;
@@ -320,7 +338,15 @@ index 0000000..db48221
 +		st.dead = true;
 +		return;
 +	}
++	st.cgc = fts_rd(st.geni, SE_CGC_CTRL);
++	fts_wr(st.geni, SE_CGC_CTRL, st.cgc | DEFAULT_CGC_EN);
++	fts_wr(st.geni, SE_DMA_GEN_CFG, fts_rd(st.geni, SE_DMA_GEN_CFG) | DMA_GEN_CGC_ON);
++	fts_wr(st.geni, SE_OUTPUT_CTRL, DEFAULT_IO_OUTPUT);
++	fts_wr(st.geni, SE_FORCE_DEFAULT, 1u);
 +	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++	fts_wr(st.geni, SE_GSI_EVENT_EN, 0);
++	fts_wr(st.geni, SE_IRQ_ROUTE, (fts_rd(st.geni, SE_IRQ_ROUTE) & ~DMA_IRQ_ROUTE) |
++	    GENI_M_IRQ_ROUTE | GENI_S_IRQ_ROUTE);
 +	fts_wr(st.geni, SE_DMA_MODE, fts_rd(st.geni, SE_DMA_MODE) & ~1u);
 +	fts_wr(st.geni, SE_RX_WM, 0);
 +	fts_wr(st.geni, SE_RX_RFR_WM, st.rx_depth - 2u);
@@ -349,6 +375,17 @@ index 0000000..db48221
 +	val = fts_rd(st.geni, SE_IRQ_EN);
 +	val |= M_CMD_DONE_EN | M_TX_FIFO_WM_EN | M_RX_FIFO_WM_EN | M_RX_FIFO_LAST_EN;
 +	fts_wr(st.geni, SE_IRQ_EN, val);
++}
++
++static void
++fts_snapshot(void)
++{
++	st.snap[0] = fts_rd(st.geni, SE_STATUS);
++	st.snap[1] = fts_rd(st.geni, SE_IRQ);
++	st.snap[2] = fts_rd(st.geni, SE_TX_COUNT);
++	st.snap[3] = fts_rd(st.geni, SE_RX_COUNT);
++	st.snap[4] = fts_rd(st.geni, SE_IOS);
++	st.snap[5] = fts_rd(st.geni, SE_MCLK);
 +}
 +
 +/* One full duplex SPI transfer. */
@@ -386,6 +423,8 @@ index 0000000..db48221
 +			fts_pause();
 +		}
 +		if (i == 2000) {
++			fts_snapshot();
++			st.irq_last = st.snap[1];
 +			fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
 +			return ETIMEDOUT;
 +		}
@@ -412,8 +451,9 @@ index 0000000..db48221
 +		irq = fts_rd(st.geni, SE_IRQ);
 +		st.irq_last = irq;
 +		if (irq & (M_CMD_OVERRUN | M_ILLEGAL_CMD | M_CMD_FAILURE)) {
++			fts_snapshot();
 +			printf("RAIN FTS: SPI error irq=%#x status=%#x\n", irq,
-+			    fts_rd(st.geni, SE_STATUS));
++			    st.snap[0]);
 +			fts_wr(st.geni, SE_IRQ_CLR, irq);
 +			fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
 +			fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
@@ -426,8 +466,9 @@ index 0000000..db48221
 +		fts_wr(st.geni, SE_IRQ_CLR, irq & (M_RX_FIFO_WM_EN | M_RX_FIFO_LAST_EN | M_TX_FIFO_WM_EN));
 +		fts_pause();
 +	}
++	fts_snapshot();
 +	printf("RAIN FTS: SPI transfer timed out, irq=%#x status=%#x\n",
-+	    st.irq_last, fts_rd(st.geni, SE_STATUS));
++	    st.irq_last, st.snap[0]);
 +	fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
 +	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
 +	return ETIMEDOUT;
@@ -611,11 +652,14 @@ index 0000000..db48221
 +{
 +	for (unsigned n = 0; n < 18; n++) {
 +		fts_sleep(10000);
-+		printf("RAIN FTS: %s clk=%d vote=%#x se0=%#x id_err=%d id=%02x %02x crc=%02x%02x raw=%02x %02x %02x %02x %02x %02x %02x %02x irq=%#x\n",
-+		    stage, st.clk, st.gcc_vote, st.gcc_se0, st.id_err,
++		printf("RAIN FTS: %s clk=%d se0=%#x ifdis=%#x cgc=%#x id_err=%d id=%02x %02x crc=%02x%02x raw=%02x %02x %02x %02x %02x %02x %02x %02x\n",
++		    stage, st.clk, st.gcc_se0, st.ifdis, st.cgc, st.id_err,
 +		    st.id[0], st.id[1], st.id[3], st.id[2],
 +		    st.raw[0], st.raw[1], st.raw[2], st.raw[3],
-+		    st.raw[4], st.raw[5], st.raw[6], st.raw[7], st.irq_last);
++		    st.raw[4], st.raw[5], st.raw[6], st.raw[7]);
++		printf("RAIN FTS: %s snap status=%#x irq=%#x txf=%#x rxf=%#x ios=%#x mclk=%#x\n",
++		    stage, st.snap[0], st.snap[1], st.snap[2], st.snap[3],
++		    st.snap[4], st.snap[5]);
 +	}
 +}
 +
@@ -702,6 +746,12 @@ index 0000000..db48221
 +	}
 +	if (!fts_clocks()) {
 +		fts_repeat("clk-withheld");
++		return;
++	}
++	st.ifdis = fts_rd(st.geni, SE_IF_DISABLE);
++	if (st.ifdis & FIFO_IF_DISABLE) {
++		printf("RAIN FTS: GENI FIFO interface disabled (GSI DMA only); SPI withheld\n");
++		fts_repeat("gsi-only");
 +		return;
 +	}
 +	/* The live qupv3_se0_spi_active pinctrl is qup0, no pull, 6 mA.

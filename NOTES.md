@@ -15,7 +15,17 @@ CI 39492943599 built it; kernel SHA-256
 `xnu/out-rain-ci/fts8/rain-display-touch-id-shim/shim-boot.img`
 (SHA-256 `5c5f6c90ca8e6718b0ad9fb2b3355a36ed45355cad95cb01cd839cd4af08ea28`)
 was temporarily booted with `fastboot boot` (product `rain`, OKAY).
-Result pending the user's photo. Reading it: raw[3] is the Focaltech
+**Result (`IMG_0176`–`IMG_0182`):** every repeat reads
+`probe clk=1 vote=0x5fe0 se0=0x4220 id_err=60 id=00 00 crc=0000 raw=00.. irq=0`.
+The GCC vote and SE0 branch came up, but the transfer timed out (60 =
+ETIMEDOUT) in the TX push loop: the first word never left the TX FIFO, so
+the RX loop never ran (hence `irq=0`, `raw` zero). The sequencer did not
+run at all. Commit after `77a1d67` adds Linux's `geni_se_io_init` (CGC_CTRL
+|= 0x7f, DMA_GENERAL_CFG |= 0xf, OUTPUT_CTRL = 0x7f, FORCE_DEFAULT),
+FIFO-mode IRQ routing (SE_IRQ_EN M/S, GSI_EVENT_EN = 0), reads
+GENI_IF_DISABLE_RO (0x64; bit 0 set = GSI DMA only, then stage `gsi-only`),
+and a failure snapshot (status, m_irq, TX/RX FIFO status, IOS, M_CLK_CFG)
+printed as a second repeat line `RAIN FTS: <stage> snap ...`. Reading it: raw[3] is the Focaltech
 status byte (0xa0 bits set = rejected), raw[7] the first data byte.
 Expected in boot mode: id `86 32` with a matching CRC. The FT8006S is
 flashless (Android downloads 131072 bytes on every reset), so after the
