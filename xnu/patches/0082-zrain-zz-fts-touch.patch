@@ -12,10 +12,10 @@ index 6630131..65f9dd2 100644
  bsd/dev/sweet_spmi.c			standard
 diff --git a/bsd/dev/sweet_fts.c b/bsd/dev/sweet_fts.c
 new file mode 100644
-index 0000000..d16e2b7
+index 0000000..2452c23
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,474 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -171,7 +171,13 @@ index 0000000..d16e2b7
 +	thread_block(THREAD_CONTINUE_NULL);
 +}
 +
-+/* The TLMM configuration of one pin: function, pull, drive and direction. */
++/* The TLMM configuration of one pin: function, pull, drive and direction.
++ *
++ * The layout is: the pull in bits [1:0], the function in bits [5:2], the
++ * drive strength in bits [8:6] (three bits, so 0 to 7) and the output
++ * enable in bit 9. A drive value of 8 would set the output enable
++ * instead, so it must stay below 8.
++ */
 +static void
 +fts_gpio(unsigned pin, unsigned mux, unsigned pull, unsigned drive, bool out, bool high)
 +{
@@ -425,7 +431,9 @@ index 0000000..d16e2b7
 +	    (unsigned long)st.tlmm);
 +
 +	/* What the pinctrl looks like now: the ABL may have muxed the SPI
-+	 * pins for the touch already, and changing that blindly is not safe. */
++	 * pins for the touch already, and changing that blindly is not safe.
++	 * The tiles of the TLMM are not laid out linearly on this SoC, so
++	 * the address of a pin is not known here: only read for now. */
 +	for (unsigned pin = FTS_SPI_PINS; pin < FTS_SPI_PINS + FTS_SPI_PIN_N; pin++) {
 +		cfg = fts_rd(st.tlmm, pin * FTS_TLMM_STRIDE);
 +		printf("RAIN FTS: gpio%u cfg=%#x function=%u pull=%u drive=%u out=%u\n",
@@ -437,16 +445,24 @@ index 0000000..d16e2b7
 +		    pin, cfg, (cfg >> 2) & 0xf, cfg & 3, (cfg >> 6) & 7, (cfg >> 9) & 1);
 +	}
 +
-+	/* The reset line is active low; the interrupt is an input. */
-+	fts_gpio(FTS_RESET_GPIO, 0u, 1u, 8u, true, false);
-+	fts_gpio(FTS_IRQ_GPIO, 0u, 2u, 8u, false, false);
-+	for (unsigned i = 0; i < FTS_RESET_LOOPS; i++) {
-+		fts_gpio(FTS_RESET_GPIO, 0u, 1u, 8u, true, false);
-+		fts_sleep(2);
-+		fts_gpio(FTS_RESET_GPIO, 0u, 1u, 8u, true, true);
-+		fts_sleep(2);
++	/* The reset line is active low. It is only pulsed when asked for:
++	 * the pin address is not confirmed yet, and a write to the wrong
++	 * TLMM register can cut a power rail. */
++	int rst = 0;
++	PE_parse_boot_argn("rainftsrst", &rst, sizeof(rst));
++	if (rst) {
++		fts_gpio(FTS_RESET_GPIO, 0u, 1u, 4u, true, false);
++		fts_gpio(FTS_IRQ_GPIO, 0u, 2u, 4u, false, false);
++		for (unsigned i = 0; i < FTS_RESET_LOOPS; i++) {
++			fts_gpio(FTS_RESET_GPIO, 0u, 1u, 4u, true, false);
++			fts_sleep(2);
++			fts_gpio(FTS_RESET_GPIO, 0u, 1u, 4u, true, true);
++			fts_sleep(2);
++		}
++		printf("RAIN FTS: reset pulsed\n");
++	} else {
++		printf("RAIN FTS: reset not pulsed (rainftsrst=1 to do it)\n");
 +	}
-+	printf("RAIN FTS: reset pulsed, surveying the GENI block\n");
 +
 +	fts_survey();
 +	fts_se_setup(4u);
