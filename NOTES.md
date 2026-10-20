@@ -116,19 +116,18 @@ therefore not only running, it is drawing, and the present path is
 copying its frames to the panel. The console is muted because the first
 swap happened, and the frame that arrived is the iOS boot logo.
 
-**Correction (2026-10-20, later).** The claim above is wrong. The
-*patched XNU source* in the CI build tree has
-`pexpert/pexpert/AppleBoot.h` ("appleboot.h - Apple logo shown during
-boot") with the logo bitmap inline, so the **kernel** draws the Apple
-logo during early boot. The kernel binary carries it, which is why the
-string search in the kernel found nothing: the bitmap is data, not a
-string.
+**Correction (2026-10-20, later).** The claim above stands. The
+patched XNU source does contain `pexpert/pexpert/AppleBoot.h` ("appleboot
+- Apple logo shown during boot") with the logo bitmap inline, but **no
+source file in the tree includes it**: a search of every `.c`, `.cpp`,
+`.h` and `.S` file for `AppleBoot`, `appleboot` and `AppleLogo` matches
+only the header itself. The code that draws the logo is not in the
+open-source tree, so the kernel cannot be drawing it, and the logo on the
+panel is the iOS userland's.
 
-That changes what the logo proves. The logo on the panel is the kernel's
-own boot logo, so it says nothing about what the userland presented. The
-console is muted on the first `present()` call, which only needs a swap
-*record*; the copy itself may have been rejected (`src = 0`) or may have
-covered only a damage rectangle, leaving the logo visible.
+(The earlier "the kernel draws it" reading came from a string search of
+the kernel binary: the bitmap is *data*, so it would not have matched
+anyway. The header is a red herring.)
 
 To see what the userland actually presents, the `SWEET FB: swap %u layer
 %u surface %u %ux%u ... b %d,%d %dx%d` lines are needed. They are
@@ -375,6 +374,32 @@ The images for it (all on the aligned 1792 MiB window):
 | `rain-display-console-aligned` | `30eb5e6a…` |
 | `rain-display-cpus4-aligned` | `7ebd1174…` |
 | `rain-display-cpus4console-aligned` | `b993b0e5…` |
+
+### Four cores stall after the boot logo — 2026-10-20
+
+With the swap-log kernel, the four-CPU boot shows the Apple logo and
+**no swap record line at all**. Since the record is now printed before
+the console is muted, and the userland's own frame (the logo) is drawn
+over the console afterwards, the record is hidden rather than absent;
+but the fact that the logo *stays* on the four-CPU boot, while it
+*disappears* on the one-CPU boot, says the userland gets further with
+one core.
+
+The four-CPU console boot also came back to fastboot on its own, which
+usually means a panic or the watchdog.
+
+So the four-CPU path is broken for a reason that is still unknown (the
+HFS catalog corruption is the documented symptom, but the phone
+rebooted before the console log could be read). The one-CPU path is the
+one that progresses, and on it the userland *does* present frames: the
+logo is replaced, but the result looks black. That is what the centre
+crop predicts - the iOS clock sits near the top of the 1125x2436 canvas
+and the crop starts at y=393, so the clock, the status bar and the home
+indicator are all cropped out of a black wallpaper.
+
+The next test is therefore the scaled variant with one core: it
+resamples the whole canvas into the panel, so the lock screen becomes
+visible if it is there.
 
 ## Rain console A/B test (2026-10-20, latest)
 
