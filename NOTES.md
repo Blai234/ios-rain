@@ -1,5 +1,53 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain touch driver, stage 1: the GENI SPI transport — 2026-10-20
+
+The Hello screen is reached and rendered (the other agent's `IMG_0170.jpeg`),
+so input is the only blocker left. Rain's touchscreen is a Focaltech
+FT8006S on the **GENI SPI** at 0x4a80000, while the inherited XNU driver
+only speaks I2C on Sweet's SE7, so it cannot reach this controller.
+
+Facts gathered from the live device (OrangeFox recovery, read only, and the
+`tools/probe_rain_touch.py` report in ignored `research/`):
+
+| | |
+| --- | --- |
+| Bus | `spi@4a80000`, `qcom,spi-geni`, chip select 0, `novatek@0` |
+| Pins | GPIO 0..3 muxed to `qup0` (drive strength 6, bias disabled) |
+| Interrupt | GPIO 80 (`focaltech,irq-gpio = <0x6c 0x50 0x2>`) |
+| Reset | GPIO 86 (`focaltech,reset-gpio = <0x6c 0x56 0x1>`, active low) |
+| Controller | FT8006S, chip id 0x8642 (the boot id pair is 0x86 0x32) |
+| Firmware | `focaltech_ts_fw_xinli.bin`, 131072 bytes (kept out of git) |
+| Report range | `focaltech,display-coords = <0 0 719 1649>`: already panel pixels |
+
+**The register map is Sweet's.** The GENI serial engine has the same
+offsets as the SE7 I2C engine Sweet already drives (`SE_CMD` 0x600,
+`SE_TX` 0x700, `SE_RX` 0x780, the packing at 0x260/0x264 and 0x284/0x288,
+the watermarks at 0x80c, the hardware parameters at 0xe24/0xe28), and the
+packing values for eight bit words, four per FIFO word, MSB first, are the
+same `0x0007f8fe` / `0x000ffefe` Sweet already writes. The SPI specific
+registers (`SE_SPI_CPHA` 0x224, `SE_SPI_DEMUX_SEL` 0x250,
+`SE_SPI_WORD_LEN` 0x268, the transfer lengths at 0x26c/0x270) and the
+sequencer opcodes come from the upstream GENI SPI master.
+
+`xnu/patches/0082-zrain-zz-fts-touch.patch` adds `bsd/dev/sweet_fts.c`:
+it reports what the pinctrl and the GENI block look like **without**
+changing the SPI pin muxing (the ABL may have configured it already, and
+changing it blindly is not safe), pulses the reset, surveys the GENI block
+(the protocol and the FIFO depth and width) and reads the controller's boot
+id with the focaltech framing (a six byte header, three dummy bytes and a
+CRC-16/KERMIT over the payload). The driver runs on its own thread, is
+bounded everywhere, and is off unless `rainfts=1` is given.
+
+`tools/check_rain_fts.py` parses the driver on the host with stub headers
+(`tools/xnu_stubs.h`), so a CI kernel build is not spent on a syntax error.
+It found two real mistakes before the build: a null receive buffer on the
+write path and an unbounded FIFO push.
+
+Next: build the kernel with the driver, boot it with `rainfts=1` and read
+the console. The report parser and the firmware loader follow once the chip
+answers 0x86 0x32.
+
 ## Rain Hello screen and missing touch input (2026-10-20, latest)
 
 The user reached the iOS 16 Hello screen in `IMG_0170.jpeg` after the
