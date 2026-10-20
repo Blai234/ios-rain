@@ -39,7 +39,7 @@ def run(*args):
 
 
 def build(llvm_bin, output, stock_boot, vendor_boot, payload=None,
-          allow_readonly_ufs=False, allow_volatile_ufs=False):
+          allow_readonly_ufs=False, allow_volatile_ufs=False, base=None, size=None):
     output.mkdir(parents=True, exist_ok=True)
     clang = tool('clang', llvm_bin)
     ld = tool('ld.lld', llvm_bin)
@@ -77,7 +77,7 @@ def build(llvm_bin, output, stock_boot, vendor_boot, payload=None,
     if payload:
         payload_bytes = payload.read_bytes()
         validate_payload(payload_bytes, allow_readonly_ufs=allow_readonly_ufs,
-                         allow_volatile_ufs=allow_volatile_ufs)
+                         allow_volatile_ufs=allow_volatile_ufs, base=base, size=size)
         data.extend(bytes((-len(data)) % 4096))
         data.extend(payload_bytes)
         struct.pack_into('<Q', data, 16, len(data))

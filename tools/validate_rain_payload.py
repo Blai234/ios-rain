@@ -16,11 +16,15 @@ MAX_SEGS = 64
 MAX_ADT = 0x100000
 # The kernel-managed RAM window (tools/mkadt.py). XNU manages exactly this
 # much: the userland gets no more.
-PHYS_BASE = 0x83000000
-MEM_SIZE = 0x6d000000
+PHYS_BASE = 0x80000000
+MEM_SIZE = 0x70000000
 # The window must stay below Android's reservation at the top of the upper
 # bank, and the shim checks the same bound (shim/loader.c).
 WINDOW_MAX_END = 0xf0000000
+# XNU's physical aperture slides on 32 MB twig boundaries, so the base has
+# to be twig aligned: 0x83000000 is only 16 MB aligned and hangs the kernel
+# before it draws anything.
+TWIG_SIZE = 0x2000000
 
 
 def prop(node, name):
@@ -31,9 +35,16 @@ def child(node, name):
     return next((n for n in node.children if prop(n, 'name') == name.encode() + b'\0'), None)
 
 
-def validate(data, allow_readonly_ufs=False, allow_volatile_ufs=False):
+def validate(data, allow_readonly_ufs=False, allow_volatile_ufs=False,
+             base=None, size=None):
     if allow_readonly_ufs and allow_volatile_ufs:
         raise ValueError('choose one UFS mode')
+    base = PHYS_BASE if base is None else base
+    size = MEM_SIZE if size is None else size
+    if base % TWIG_SIZE:
+        raise ValueError('Rain RAM window base is not twig aligned')
+    if base + size > WINDOW_MAX_END:
+        raise ValueError('Rain RAM window reaches into the reserved region')
     if len(data) > 0x8000000:
         raise ValueError('payload exceeds diagnostic Image size limit')
     if len(data) < BASE_HEADER or data[:8] != b'SWEETXNU':
@@ -45,10 +56,8 @@ def validate(data, allow_readonly_ufs=False, allow_volatile_ufs=False):
     if len(data) < header:
         raise ValueError('truncated segment table')
     virt, entry, adt_off, adt_size, kernel_end, phys, mem = struct.unpack_from('<7Q', data, 0x10)
-    if (phys, mem) != (PHYS_BASE, MEM_SIZE):
+    if (phys, mem) != (base, size):
         raise ValueError('payload selects the wrong Rain RAM window')
-    if phys + mem > WINDOW_MAX_END:
-        raise ValueError('Rain RAM window reaches into the reserved region')
     if virt == 0 or kernel_end <= virt or not virt <= entry < kernel_end:
         raise ValueError('invalid kernel virtual range')
     kernel_bytes = kernel_end - virt
@@ -97,8 +106,8 @@ def validate(data, allow_readonly_ufs=False, allow_volatile_ufs=False):
             raise ValueError('read-only UFS requires rd=ufsroot0 without write flags')
     elif ufs is not None:
         raise ValueError('storage-free Rain ADT must omit sweet-ufs')
-    if (prop(chosen, 'dram-base') != struct.pack('<Q', PHYS_BASE) or
-            prop(chosen, 'dram-size') != struct.pack('<Q', MEM_SIZE)):
+    if (prop(chosen, 'dram-base') != struct.pack('<Q', base) or
+            prop(chosen, 'dram-size') != struct.pack('<Q', size)):
         raise ValueError('ADT RAM window differs from payload')
     if (prop(fb, 'reg') != struct.pack('<QQ', 0x5c000000, 0xf00000) or
             prop(fb, 'width') != struct.pack('<I', 720) or

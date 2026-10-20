@@ -250,6 +250,42 @@ flashed. The phone left fastboot and stayed out of adb.
 The scaled and console variants for the same window are in the same
 directory. The screen result is pending.
 
+### The 1744 MiB window hung the kernel — the base was not twig aligned
+
+The boot with `0x83000000 + 0x6d000000` never got past the shim: the
+screen stayed on the red diagnostic console, with no XNU output at all
+(not even the `SWEET EARLY` stage markers), and the phone stayed alive
+(out of fastboot and adb), so the kernel hung or panicked before the
+console existed.
+
+**Cause.** XNU's physical aperture slides on 32 MB "twig" boundaries:
+`arm_vm_physmap_slide` gives every PTOV entry a VA whose offset inside
+its twig equals the offset of its PA inside its twig, and the whole
+scheme only lines up when `gPhysBase` is twig aligned. The old window
+(`0xb0000000`) was 32 MB aligned; `0x83000000` is only 16 MB aligned, so
+the aperture was built half a twig off and the kernel never came up.
+
+Fixed: the base is `0x80000000` (32 MB aligned, still above the shim
+Image at `0x40080000-0x42220000`) and the window is
+`0x80000000 + 0x70000000` = 1792 MiB, ending at the same `0xf0000000`
+as before.
+
+- `shim/loader.c` and `tools/validate_rain_payload.py` now reject a
+  window whose base is not twig aligned, so this cannot be booted again.
+- `tools/mkadt.py`, `tools/validate_rain_payload.py` and
+  `tools/check_rain_memory.py` carry the new window; the tools take
+  `--base`/`--size` so a window can be bisected without editing files.
+
+The images for the aligned window are in `xnu/out-rain-ci/bisect/`
+(`rain-display-crop-aligned-shim/shim-boot.img` and the scaled and
+console variants). Not booted yet.
+
+Note for the next agent: the shim Image on Rain is loaded at
+`0x40080000` (not `0x80080000` as on sweet), and the payload it carries
+ends at `0x42220000`. The screen font renders `8` like `B`, so the shim's
+`base=83000000` and `JUMP 844a6488` read as `B3000000` and `B44AB648` in
+a photo.
+
 ## Rain console A/B test (2026-10-20, latest)
 
 On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded

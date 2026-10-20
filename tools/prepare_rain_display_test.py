@@ -47,9 +47,10 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def build_adt(path, seed=None):
+def build_adt(path, seed=None, base=None, size=None):
     """A Rain tree with the storage node the volatile overlay boot needs."""
-    tree = mkadt.build(seed=seed, rain=True, ufs=True)
+    tree = mkadt.build(seed=seed, rain=True, ufs=True,
+                       rain_base=base, rain_size=size)
     blob = adt.serialize(tree)
     path.write_bytes(blob)
     return blob
@@ -75,6 +76,11 @@ def main():
     parser.add_argument('--stock-vendor-boot', type=Path,
                         default=ROOT / 'backup' / 'rain-2026-10-19' / 'vendor_boot_a.img')
     parser.add_argument('--llvm-bin', type=Path)
+    parser.add_argument('--base', type=lambda v: int(v, 0),
+                        help='Rain RAM window base (default from tools/mkadt.py)')
+    parser.add_argument('--size', type=lambda v: int(v, 0),
+                        help='Rain RAM window size (default from tools/mkadt.py)')
+    parser.add_argument('--tag', default='', help='suffix for the output files')
     parser.add_argument('--image', action='store_true',
                         help='also build the boot-v3 image for each variant')
     args = parser.parse_args()
@@ -87,26 +93,27 @@ def main():
     if args.adt:
         adt_blob = args.adt.read_bytes()
     else:
-        adt_blob = build_adt(adt_path, kernel_seed(kernel_bytes))
+        adt_blob = build_adt(adt_path, kernel_seed(kernel_bytes),
+                             base=args.base, size=args.size)
     print(f'ADT {adt_path}: {len(adt_blob)} bytes')
 
     report = {'kernel': str(args.kernel), 'kernel_sha256': sha256(kernel_bytes),
               'adt': str(adt_path), 'adt_sha256': sha256(adt_blob), 'variants': {}}
     for name, cmdline in VARIANTS:
         blob, info = mkpayload.build(args.kernel, adt_path, cmdline)
-        checks = validate(blob, allow_volatile_ufs=True)
-        payload = args.outdir / f'rain-display-{name}.payload'
+        checks = validate(blob, allow_volatile_ufs=True, base=args.base, size=args.size)
+        payload = args.outdir / f'rain-display-{name}{args.tag}.payload'
         payload.write_bytes(blob)
         entry = {'command_line': cmdline, 'payload': str(payload),
                  'payload_sha256': sha256(blob), 'payload_bytes': len(blob),
                  'preflight': checks, 'info': {k: v for k, v in info.items() if k != 'segs'}}
         if args.image:
-            entry['image'] = build_image(args, payload, name)
+            entry['image'] = build_image(args, payload, f'{name}{args.tag}')
         report['variants'][name] = entry
         print(f'{name}: {payload} ({len(blob)} bytes) {entry["payload_sha256"]}')
         print(f'  {cmdline}')
-    (args.outdir / 'rain-display-test.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(f'report: {args.outdir / "rain-display-test.json"}')
+    (args.outdir / f'rain-display{args.tag}-test.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(f'report: {args.outdir / f"rain-display{args.tag}-test.json"}')
 
 
 def build_image(args, payload, name):
@@ -115,7 +122,8 @@ def build_image(args, payload, name):
 
     outdir = args.outdir / f'rain-display-{name}-shim'
     build_rain_shim.build(args.llvm_bin, outdir, args.stock_boot, args.stock_vendor_boot,
-                          payload, allow_volatile_ufs=True)
+                          payload, allow_volatile_ufs=True,
+                          base=args.base, size=args.size)
     image = outdir / 'shim-boot.img'
     return {'path': str(image), 'sha256': sha256(image.read_bytes()),
             'bytes': image.stat().st_size}

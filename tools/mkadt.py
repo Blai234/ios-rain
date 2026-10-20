@@ -17,13 +17,19 @@ MEM_SIZE = 0x4d000000
 # osfmk/arm64/arm_vm_init.c), so this is all the userland ever gets: sweet
 # has 3.95 GiB and topaz 4 GiB, Rain only had 1 GiB.
 #
-# The base has to clear the shim Image and the payload it carries, which
-# are still in RAM at 0x80080000-0x82220000 while the kernel is copied
-# there, and it must not reach into Android's reservation at the top of
-# the upper bank (0xf3c00000-0xffbfffff in the live /proc/iomem). The end
-# stays at 0xf0000000, the same 60 MiB of headroom the 1 GiB window had.
-RAIN_PHYS_BASE = 0x83000000
-RAIN_MEM_SIZE = 0x6d000000
+# The base has to be aligned to the 32 MB "twig" that XNU's physical
+# aperture slides on (arm_vm_physmap_slide preserves each PA's offset
+# inside its twig). A base that is only 16 MB aligned (0x83000000) hangs
+# the kernel before it draws anything.
+#
+# The base also has to clear the shim Image and the payload it carries,
+# which are still in RAM at 0x40080000-0x42220000 while the kernel is
+# copied there, and the window must not reach into Android's reservation
+# at the top of the upper bank (0xf3c00000-0xffbfffff in the live
+# /proc/iomem). The end stays at 0xf0000000, the same 60 MiB of headroom
+# the 1 GiB window had.
+RAIN_PHYS_BASE = 0x80000000
+RAIN_MEM_SIZE = 0x70000000
 # --highmem (phone only): the whole upper DDR bank. The topaz live FDT memory
 # node is <0x40000000 0x3bb00000>, <0x80000000 3G>, <0x1_40000000 4G>; every
 # fixed reserved-memory carve-out is below 0x63900000 and the dynamic pools are
@@ -83,13 +89,17 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False, native=False, rain=False, ufs=None):
+def build(seed=None, qemu=False, highmem=False, native=False, rain=False, ufs=None,
+          rain_base=None, rain_size=None):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py).
 
     ufs=True adds the storage node to a Rain tree. The Rain default omits it
     (the storage-free diagnostic boot); the volatile overlay boot needs it to
     find the host controller, and the payload validator only accepts the
     volatile mode with the observed node.
+
+    rain_base/rain_size override the Rain RAM window, so a window can be
+    bisected without touching the defaults.
     """
     if rain and highmem:
         raise ValueError('rain has no 0x140000000 upper DDR bank; --highmem is unsafe')
@@ -98,7 +108,9 @@ def build(seed=None, qemu=False, highmem=False, native=False, rain=False, ufs=No
     # but rain's panel and memory layout differ. The low RAM window is inside
     # rain's live /memory range, below its observed high RAM reservation.
     phys_base, mem_size = ((HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else
-                           ((RAIN_PHYS_BASE, RAIN_MEM_SIZE) if rain else (PHYS_BASE, MEM_SIZE)))
+                           ((rain_base if rain_base is not None else RAIN_PHYS_BASE,
+                             rain_size if rain_size is not None else RAIN_MEM_SIZE)
+                            if rain else (PHYS_BASE, MEM_SIZE)))
     fb_w, fb_h = (720, 1650) if rain else (FB_W, FB_H)
     ecid = 0x5241494e00000001 if rain else SWEET_ECID
     board = 'rain' if rain else 'topaz'
@@ -275,7 +287,11 @@ def build(seed=None, qemu=False, highmem=False, native=False, rain=False, ufs=No
 if __name__ == '__main__':
     root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv,
                  native='--native' in sys.argv, rain='--rain' in sys.argv,
-                 ufs=True if '--ufs' in sys.argv else None)
+                 ufs=True if '--ufs' in sys.argv else None,
+                 rain_base=int(sys.argv[sys.argv.index('--rain-base') + 1], 0)
+                 if '--rain-base' in sys.argv else None,
+                 rain_size=int(sys.argv[sys.argv.index('--rain-size') + 1], 0)
+                 if '--rain-size' in sys.argv else None)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:

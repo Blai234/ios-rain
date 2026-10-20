@@ -9,8 +9,8 @@ import re
 import subprocess
 from pathlib import Path
 
-PHYS_BASE = 0x83000000
-MEM_SIZE = 0x6d000000
+PHYS_BASE = 0x80000000
+MEM_SIZE = 0x70000000
 LINE = re.compile(r'^\s*([0-9a-fA-F]+)-([0-9a-fA-F]+)\s*:\s*(.+)$')
 
 

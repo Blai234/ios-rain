@@ -19,6 +19,8 @@
 #define MAX_ADT_SIZE		0x100000UL
 /* Rain: the top of the kernel-managed RAM (see tools/mkadt.py). */
 #define RAIN_WINDOW_MAX_END	0xf0000000ULL
+/* xnu's physical aperture slides on 32 MB twigs. */
+#define RAIN_WINDOW_TWIG	0x2000000ULL
 
 struct payload_seg {
 	uint64_t vmaddr, vmsize, file_off, file_size;
@@ -192,9 +194,14 @@ const char *loader_boot(uintptr_t dtb)
 	 * must also stay below the region Android reserves at the top of the
 	 * upper bank (0xf3c00000-0xffbfffff in the live /proc/iomem); the
 	 * tools keep 60 MiB of headroom below that.
+	 *
+	 * The base has to be aligned to the 32 MB twig that xnu's physical
+	 * aperture slides on (arm_vm_physmap_slide): a base that is only
+	 * 16 MB aligned hangs the kernel before it draws anything.
 	 */
 	if (p->phys_base < image_end || p->mem_size < 0x40000000ULL ||
-	    p->phys_base + p->mem_size > RAIN_WINDOW_MAX_END)
+	    p->phys_base + p->mem_size > RAIN_WINDOW_MAX_END ||
+	    (p->phys_base & (RAIN_WINDOW_TWIG - 1)) != 0)
 		return "wrong Rain RAM window";
 #endif
 
