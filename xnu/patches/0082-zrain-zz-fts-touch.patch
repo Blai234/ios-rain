@@ -1,0 +1,501 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 6630131..65f9dd2 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -107,6 +107,7 @@ bsd/dev/memdev.c			standard
+ bsd/dev/sweet_ufs.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
++bsd/dev/sweet_fts.c			standard
+ bsd/dev/sweet_touch.c			standard
+ bsd/dev/sweet_rpmh.c			standard
+ bsd/dev/sweet_spmi.c			standard
+diff --git a/bsd/dev/sweet_fts.c b/bsd/dev/sweet_fts.c
+new file mode 100644
+index 0000000..d16e2b7
+--- /dev/null
++++ b/bsd/dev/sweet_fts.c
+@@ -0,0 +1,458 @@
++/*
++ * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
++ *
++ * The controller is a Focaltech FT8006S (chip id 0x8642) on GENI SPI at
++ * 0x4a80000, chip select 0. The live device tree has the SPI pins on
++ * GPIO 0..3 muxed to qup0, the interrupt on GPIO 80 and the reset on
++ * GPIO 86. Android drives it with the fts_ts driver; the inherited XNU
++ * touch driver only speaks I2C on Sweet's SE7, so it cannot reach it.
++ *
++ * Stage 1 is the transport and the controller identity:
++ *   - what the pinctrl and the GENI block look like right now,
++ *   - the Focaltech SPI framing (a six byte header, three dummy bytes and
++ *     a CRC-16/KERMIT over the payload),
++ *   - the chip id read.
++ * The report parser and the firmware loader follow once the chip answers.
++ *
++ * Everything is bounded and runs on one worker thread: a failure here must
++ * not stop the rest of the system from booting.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void sweet_hid_touch(int finger, int down, int x, int y);
++void rain_touch_init(void);
++
++/* Hardware. */
++#define FTS_GENI_PA      0x04a80000u
++#define FTS_GENI_LEN     0x00004000u
++#define FTS_TLMM_PA      0x00400000u
++#define FTS_TLMM_STRIDE  0x00001000u
++#define FTS_TLMM_LEN     0x000c0000u
++#define FTS_SPI_PINS     0u          /* GPIO 0..3: the qup0 SPI pins */
++#define FTS_SPI_PIN_N    4u
++#define FTS_IRQ_GPIO     80u
++#define FTS_RESET_GPIO   86u
++#define FTS_RESET_LOOPS  20u
++
++/* The GENI serial engine register map. It is the same map Sweet's SE7 I2C
++ * engine uses, so the offsets and the byte order carry over unchanged. */
++#define SE_STATUS        0x040u
++#define SE_MCLK          0x048u
++#define SE_FW            0x068u
++#define SE_CLK_SEL       0x07cu
++#define SE_PACK0_TX      0x260u
++#define SE_PACK1_TX      0x264u
++#define SE_PACK0_RX      0x284u
++#define SE_PACK1_RX      0x288u
++#define SE_CMD           0x600u
++#define SE_CTRL          0x604u
++#define SE_IRQ           0x610u
++#define SE_IRQ_EN        0x614u
++#define SE_IRQ_CLR       0x618u
++#define SE_TX            0x700u
++#define SE_RX            0x780u
++#define SE_TX_COUNT      0x800u
++#define SE_RX_COUNT      0x804u
++#define SE_TX_WM         0x80cu
++#define SE_HW_TX         0xe24u
++#define SE_HW_RX         0xe28u
++
++/* The SPI specific registers of the same block. */
++#define SE_SPI_CPHA      0x224u
++#define SE_SPI_LOOPBACK  0x22cu
++#define SE_SPI_CPOL      0x230u
++#define SE_SPI_DEMUX_INV 0x24cu
++#define SE_SPI_DEMUX_SEL 0x250u
++#define SE_SPI_TRANS_CFG 0x25cu
++#define SE_SPI_WORD_LEN  0x268u
++#define SE_SPI_TX_LEN    0x26cu
++#define SE_SPI_RX_LEN    0x270u
++#define SE_SPI_DELAY     0x278u
++
++/* GENI fields. */
++#define FW_REV_PROTOCOL_MSK  0xff00u
++#define FW_REV_PROTOCOL_SHFT 8u
++#define PROTO_SPI            1u
++#define M_CMD_DONE_EN        0x00000001u
++#define M_RX_FIFO_WM_EN      0x04000000u
++#define M_RX_FIFO_LAST_EN    0x08000000u
++#define M_TX_FIFO_WM_EN      0x40000000u
++#define M_CMD_DONE           0x00000001u
++#define M_CMD_ABORT          0x00000002u
++#define M_CMD_CANCEL         0x00000004u
++#define M_CMD_OVERRUN        0x00000002u
++#define M_ILLEGAL_CMD        0x00000004u
++#define M_CMD_FAILURE        0x00000008u
++#define SPI_TX_ONLY          1u
++#define SPI_RX_ONLY          2u
++#define M_OPCODE_SHFT        27u
++#define TX_FIFO_DEPTH_MSK    0x003f0000u
++#define TX_FIFO_DEPTH_SHFT   16u
++#define TX_FIFO_WIDTH_MSK    0x3f000000u
++#define TX_FIFO_WIDTH_SHFT   24u
++#define RX_FIFO_DEPTH_MSK    0x003f0000u
++#define RX_FIFO_DEPTH_SHFT   16u
++#define RX_FIFO_WIDTH_MSK    0x3f000000u
++#define RX_FIFO_WIDTH_SHFT   24u
++#define TX_FIFO_WC_MSK       0x0fffffffu
++#define RX_FIFO_WC_MSK       0x01ffffffu
++
++/* The packing for eight bit words, four per FIFO word, most significant
++ * bit first. These are the values Sweet's I2C engine already uses. */
++#define SE_PACK0            0x0007f8feu
++#define SE_PACK1            0x000ffefeu
++
++/* The Focaltech SPI framing. */
++#define FTS_WRITE_CMD       0x00u
++#define FTS_READ_CMD        0xa0u    /* 0x80 | DATA_CRC_EN */
++#define FTS_HEADER_LEN      6u
++#define FTS_DUMMY_BYTES     3u
++#define FTS_MAX_XFER        256u
++#define FTS_CHIP_ID_REG     0x00u    /* the boot id register pair */
++#define FTS_MAX_TOUCH       10u
++
++static struct {
++	vm_offset_t geni, tlmm;
++	bool dead;
++	uint32_t tx_depth, tx_width, rx_depth, rx_width;
++	uint32_t irq_last;
++} st;
++static int fts_sleep_chan;
++
++static uint32_t
++fts_rd(vm_offset_t base, uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++fts_wr(vm_offset_t base, uint32_t off, uint32_t val)
++{
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(base + off) = val;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++
++static void
++fts_sleep(unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&fts_sleep_chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++/* The TLMM configuration of one pin: function, pull, drive and direction. */
++static void
++fts_gpio(unsigned pin, unsigned mux, unsigned pull, unsigned drive, bool out, bool high)
++{
++	uint32_t off = pin * FTS_TLMM_STRIDE;
++	uint32_t cfg = fts_rd(st.tlmm, off);
++	if (out) {
++		fts_wr(st.tlmm, off + 4u,
++		    (fts_rd(st.tlmm, off + 4u) & ~2u) | (high ? 2u : 0u));
++	}
++	cfg &= ~0x3ffu;
++	cfg |= (mux << 2) | pull | (drive << 6) | (out ? 0x200u : 0u);
++	fts_wr(st.tlmm, off, cfg);
++}
++
++/* Tell what the GENI block says about itself. */
++static void
++fts_survey(void)
++{
++	uint32_t fw = fts_rd(st.geni, SE_FW);
++	uint32_t htx = fts_rd(st.geni, SE_HW_TX);
++	uint32_t hrx = fts_rd(st.geni, SE_HW_RX);
++	uint32_t status = fts_rd(st.geni, SE_STATUS);
++	uint32_t proto = (fw & FW_REV_PROTOCOL_MSK) >> FW_REV_PROTOCOL_SHFT;
++
++	st.tx_depth = (htx & TX_FIFO_DEPTH_MSK) >> TX_FIFO_DEPTH_SHFT;
++	st.tx_width = (htx & TX_FIFO_WIDTH_MSK) >> TX_FIFO_WIDTH_SHFT;
++	st.rx_depth = (hrx & RX_FIFO_DEPTH_MSK) >> RX_FIFO_DEPTH_SHFT;
++	st.rx_width = (hrx & RX_FIFO_WIDTH_MSK) >> RX_FIFO_WIDTH_SHFT;
++	printf("RAIN FTS: geni fw=%#x proto=%u status=%#x tx_fifo=%u/%u rx_fifo=%u/%u\n",
++	    fw, proto, status, st.tx_depth, st.tx_width, st.rx_depth, st.rx_width);
++	if (proto != PROTO_SPI) {
++		printf("RAIN FTS: GENI is not in SPI mode (proto=%u); the ABL firmware is not loaded\n", proto);
++	}
++	if (st.tx_width != 32 || st.rx_width != 32) {
++		printf("RAIN FTS: unexpected FIFO width, SPI needs 32 bit words\n");
++	}
++}
++
++/* Put the serial engine into FIFO mode with the SPI parameters set. */
++static void
++fts_se_setup(uint32_t speed_div)
++{
++	uint32_t val;
++
++	/* Stop the sequencers and clear every interrupt. */
++	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++	fts_wr(st.geni, SE_CTRL, M_CMD_CANCEL);
++	fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
++	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++
++	/* The SPI parameters: mode 0, chip select 0, eight bit words. */
++	fts_wr(st.geni, SE_SPI_LOOPBACK, 0);
++	fts_wr(st.geni, SE_SPI_DEMUX_SEL, 0);
++	fts_wr(st.geni, SE_SPI_CPHA, 0);
++	fts_wr(st.geni, SE_SPI_CPOL, 0);
++	fts_wr(st.geni, SE_SPI_DEMUX_INV, 0);
++	fts_wr(st.geni, SE_SPI_TRANS_CFG, 0);
++	fts_wr(st.geni, SE_SPI_WORD_LEN, 8u - 4u);
++	fts_wr(st.geni, SE_SPI_DELAY, 0);
++
++	/* The packing: eight bit words, four per FIFO word, MSB first. */
++	fts_wr(st.geni, SE_PACK0_TX, SE_PACK0);
++	fts_wr(st.geni, SE_PACK1_TX, SE_PACK1);
++	fts_wr(st.geni, SE_PACK0_RX, SE_PACK0);
++	fts_wr(st.geni, SE_PACK1_RX, SE_PACK1);
++
++	/* The serial engine clock: the divider and the clock enable. */
++	fts_wr(st.geni, SE_CLK_SEL, 0);
++	fts_wr(st.geni, SE_MCLK, (speed_div << 4) | 1u);
++
++	/* The interrupts the FIFO transfer needs. */
++	val = fts_rd(st.geni, SE_IRQ_EN);
++	val |= M_CMD_DONE_EN | M_TX_FIFO_WM_EN | M_RX_FIFO_WM_EN | M_RX_FIFO_LAST_EN;
++	fts_wr(st.geni, SE_IRQ_EN, val);
++}
++
++/* One full duplex SPI transfer. */
++static int
++fts_spi_xfer(const uint8_t *tx, unsigned txlen, uint8_t *rx, unsigned rxlen)
++{
++	unsigned sent = 0, got = 0;
++	uint32_t irq;
++
++	if (txlen > FTS_MAX_XFER || rxlen > FTS_MAX_XFER) {
++		return EIO;
++	}
++	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++	fts_wr(st.geni, SE_TX_WM, 0);
++	fts_wr(st.geni, SE_SPI_TX_LEN, txlen);
++	fts_wr(st.geni, SE_SPI_RX_LEN, rxlen);
++	/* The primary sequencer: transmit and receive at once. */
++	fts_wr(st.geni, SE_CMD, ((SPI_TX_ONLY | SPI_RX_ONLY) << M_OPCODE_SHFT));
++
++	/* Push the transmit words. The FIFO holds a few, so the rest follows
++	 * the watermark interrupt. */
++	while (sent < txlen) {
++		uint32_t word = 0;
++		unsigned n = txlen - sent;
++		if (n > 4) {
++			n = 4;
++		}
++		/* Never overrun the FIFO: drain it first when it is full. */
++		for (unsigned i = 0; i < 2000; i++) {
++			if (!(fts_rd(st.geni, SE_TX_COUNT) & TX_FIFO_WC_MSK)) {
++				break;
++			}
++			fts_wr(st.geni, SE_TX_WM, 1u);
++			fts_sleep(0);
++		}
++		for (unsigned i = 0; i < n; i++) {
++			word |= (uint32_t)tx[sent + i] << (8u * i);
++		}
++		fts_wr(st.geni, SE_TX, word);
++		sent += n;
++	}
++	fts_wr(st.geni, SE_TX_WM, 0);
++
++	/* Drain the receive FIFO until the transfer is done. */
++	for (unsigned i = 0; i < 20000; i++) {
++		uint32_t count = fts_rd(st.geni, SE_RX_COUNT) & RX_FIFO_WC_MSK;
++		while (count--) {
++			uint32_t word = fts_rd(st.geni, SE_RX);
++			if (rx == NULL) {
++				continue;
++			}
++			for (unsigned j = 0; j < 4 && got < rxlen; j++) {
++				rx[got++] = (uint8_t)(word >> (8u * j));
++			}
++		}
++		irq = fts_rd(st.geni, SE_IRQ);
++		st.irq_last = irq;
++		if (irq & (M_CMD_OVERRUN | M_ILLEGAL_CMD | M_CMD_FAILURE)) {
++			printf("RAIN FTS: SPI error irq=%#x status=%#x\n", irq,
++			    fts_rd(st.geni, SE_STATUS));
++			fts_wr(st.geni, SE_IRQ_CLR, irq);
++			fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
++			fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++			return EIO;
++		}
++		if (irq & M_CMD_DONE) {
++			fts_wr(st.geni, SE_IRQ_CLR, irq);
++			return got >= rxlen ? 0 : EIO;
++		}
++		fts_wr(st.geni, SE_IRQ_CLR, irq & (M_RX_FIFO_WM_EN | M_RX_FIFO_LAST_EN | M_TX_FIFO_WM_EN));
++		fts_sleep(0);
++	}
++	printf("RAIN FTS: SPI transfer timed out, irq=%#x status=%#x\n",
++	    st.irq_last, fts_rd(st.geni, SE_STATUS));
++	fts_wr(st.geni, SE_CTRL, M_CMD_ABORT);
++	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++	return ETIMEDOUT;
++}
++
++/* The Focaltech framing: an address, a command, the length, three dummy
++ * bytes and the payload. The write path is used by the firmware loader,
++ * which comes with the report parser. */
++static int fts_write(const uint8_t *data, unsigned len) __unused;
++
++static int
++fts_write(const uint8_t *data, unsigned len)
++{
++	uint8_t buf[FTS_MAX_XFER];
++	unsigned total = FTS_HEADER_LEN + FTS_DUMMY_BYTES + len;
++
++	if (total > FTS_MAX_XFER || len < 2) {
++		return EIO;
++	}
++	buf[0] = data[0];
++	buf[1] = FTS_WRITE_CMD;
++	buf[2] = (uint8_t)((len - 1u) >> 8);
++	buf[3] = (uint8_t)(len - 1u);
++	memset(&buf[4], 0, FTS_DUMMY_BYTES);
++	memcpy(&buf[FTS_HEADER_LEN + FTS_DUMMY_BYTES], &data[1], len - 1u);
++	return fts_spi_xfer(buf, total, NULL, 0);
++}
++
++/* A read returns the payload followed by its two CRC bytes. */
++static int
++fts_read(const uint8_t *cmd, unsigned cmdlen, uint8_t *data, unsigned len)
++{
++	uint8_t buf[FTS_MAX_XFER];
++	unsigned total = FTS_HEADER_LEN + FTS_DUMMY_BYTES + len + 2u;
++	int error;
++
++	if (total > FTS_MAX_XFER || len == 0 || cmdlen == 0) {
++		return EIO;
++	}
++	buf[0] = cmd[0];
++	buf[1] = FTS_READ_CMD;
++	buf[2] = (uint8_t)(len >> 8);
++	buf[3] = (uint8_t)len;
++	memset(&buf[4], 0, FTS_DUMMY_BYTES);
++	error = fts_spi_xfer(buf, total, data, len + 2u);
++	if (error) {
++		return error;
++	}
++	/* The status byte of the answer is at the end of the header. */
++	return 0;
++}
++
++static uint16_t
++fts_crc(const uint8_t *data, unsigned len)
++{
++	uint16_t crc = 0xffff;
++	for (unsigned i = 0; i < len; i++) {
++		crc ^= data[i];
++		for (unsigned j = 0; j < 8; j++) {
++			crc = (crc & 1u) ? (uint16_t)((crc >> 1) ^ 0x8408u) : (uint16_t)(crc >> 1);
++		}
++	}
++	return crc;
++}
++
++/* The identity of the controller: the boot id register pair. */
++static void
++fts_probe_id(void)
++{
++	uint8_t cmd = FTS_CHIP_ID_REG;
++	uint8_t buf[16];
++	uint16_t calc, read;
++	int error;
++
++	memset(buf, 0, sizeof(buf));
++	error = fts_read(&cmd, 1, buf, 2);
++	if (error) {
++		printf("RAIN FTS: chip id read failed: %d\n", error);
++		return;
++	}
++	calc = fts_crc(buf, 2);
++	read = (uint16_t)((buf[3] << 8) | buf[2]);
++	printf("RAIN FTS: boot id %02x %02x crc %04x/%04x\n", buf[0], buf[1], calc, read);
++	if (buf[0] == 0x86 && buf[1] == 0x32) {
++		printf("RAIN FTS: FT8006S answered\n");
++	} else {
++		printf("RAIN FTS: unexpected chip id\n");
++	}
++}
++
++static void
++fts_thread(void *arg __unused, wait_result_t result __unused)
++{
++	uint32_t cfg;
++
++	st.geni = ml_io_map(FTS_GENI_PA, FTS_GENI_LEN);
++	st.tlmm = ml_io_map(FTS_TLMM_PA, FTS_TLMM_LEN);
++	if (st.geni == 0 || st.tlmm == 0) {
++		printf("RAIN FTS: cannot map the GENI SPI or the TLMM\n");
++		return;
++	}
++	printf("RAIN FTS: geni=%#lx tlmm=%#lx\n", (unsigned long)st.geni,
++	    (unsigned long)st.tlmm);
++
++	/* What the pinctrl looks like now: the ABL may have muxed the SPI
++	 * pins for the touch already, and changing that blindly is not safe. */
++	for (unsigned pin = FTS_SPI_PINS; pin < FTS_SPI_PINS + FTS_SPI_PIN_N; pin++) {
++		cfg = fts_rd(st.tlmm, pin * FTS_TLMM_STRIDE);
++		printf("RAIN FTS: gpio%u cfg=%#x function=%u pull=%u drive=%u out=%u\n",
++		    pin, cfg, (cfg >> 2) & 0xf, cfg & 3, (cfg >> 6) & 7, (cfg >> 9) & 1);
++	}
++	for (unsigned pin = FTS_IRQ_GPIO; pin <= FTS_RESET_GPIO; pin++) {
++		cfg = fts_rd(st.tlmm, pin * FTS_TLMM_STRIDE);
++		printf("RAIN FTS: gpio%u cfg=%#x function=%u pull=%u drive=%u out=%u\n",
++		    pin, cfg, (cfg >> 2) & 0xf, cfg & 3, (cfg >> 6) & 7, (cfg >> 9) & 1);
++	}
++
++	/* The reset line is active low; the interrupt is an input. */
++	fts_gpio(FTS_RESET_GPIO, 0u, 1u, 8u, true, false);
++	fts_gpio(FTS_IRQ_GPIO, 0u, 2u, 8u, false, false);
++	for (unsigned i = 0; i < FTS_RESET_LOOPS; i++) {
++		fts_gpio(FTS_RESET_GPIO, 0u, 1u, 8u, true, false);
++		fts_sleep(2);
++		fts_gpio(FTS_RESET_GPIO, 0u, 1u, 8u, true, true);
++		fts_sleep(2);
++	}
++	printf("RAIN FTS: reset pulsed, surveying the GENI block\n");
++
++	fts_survey();
++	fts_se_setup(4u);
++	fts_probe_id();
++	printf("RAIN FTS: stage 1 done\n");
++}
++
++void
++rain_touch_init(void)
++{
++	thread_t thread;
++	kern_return_t kr;
++	int on = 0;
++
++	/* Off unless asked for: stage 1 is a diagnostic. */
++	PE_parse_boot_argn("rainfts", &on, sizeof(on));
++	if (!on) {
++		return;
++	}
++	kr = kernel_thread_start(fts_thread, NULL, &thread);
++	if (kr == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	} else {
++		printf("RAIN FTS: kernel_thread_start failed %d\n", kr);
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index b9b099b..2269ea0 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -53,6 +53,7 @@ static void sweet_log_start(void);
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
++extern void rain_touch_init(void);
+ extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -772,6 +773,12 @@ sweet_ufs_init(void)
+ 	} else {
+ 		printf("SWEET UFS: keys/touch/USB skipped (topaz, sweethw=0)\n");
+ 	}
++	/*
++	 * Rain's touchscreen is a Focaltech FT8006S on the GENI SPI, not on
++	 * Sweet's I2C bus, so it has its own driver. It only reads and
++	 * writes the touch controller and the TLMM.
++	 */
++	rain_touch_init();
+ 	return 0;
+ }
+ 
