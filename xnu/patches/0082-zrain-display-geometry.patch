@@ -368,8 +368,8 @@ index 27bc49d..4036879 100644
 +	/* Panel pixels -> the presented display (SweetFramebuffer.cpp). */
 +	IOFixed nx, ny;
 +	if (fScale) {
-+		nx = (IOFixed)(((int64_t)x * fLogicalW << 16) / fPanelW);
-+		ny = (IOFixed)(((int64_t)y * fLogicalH << 16) / fPanelH);
++		nx = (IOFixed)(((int64_t)x << 16) / fPanelW);
++		ny = (IOFixed)(((int64_t)y << 16) / fPanelH);
 +	} else {
 +		nx = (IOFixed)(((int64_t)(x + fOffX) << 16) / fLogicalW);
 +		ny = (IOFixed)(((int64_t)(y + fOffY) << 16) / fLogicalH);

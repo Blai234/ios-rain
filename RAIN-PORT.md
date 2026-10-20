@@ -1,5 +1,18 @@
 # Redmi 10C (`rain`) port status — 2026-10-20
 
+## Hello screen reached; touchscreen is the current blocker — 2026-10-20
+
+`IMG_0170.jpeg` shows the iOS 16 Hello setup screen with a greeting, status
+bar and home indicator. Neither a swipe nor a tap on its information button
+responds. In a temporary OrangeFox recovery boot, Linux enumerates `fts_ts`
+on `spi0.0` with ten contacts and 720×1650 coordinates. Its log identifies an
+FT8006S controller, ID `0x8642`, and shows a 131072-byte firmware download.
+The live DT identifies GENI SPI `0x04a80000`, active pins GPIO 0..3, IRQ GPIO
+80 and reset GPIO 86. The existing XNU touch patch uses Sweet's I²C bus and
+does not provide a Rain SPI backend. A normalized HID coordinate arithmetic
+error has been corrected, but no new kernel image containing that change has
+been built or booted. See the current handoff in `NOTES.md`.
+
 ## Display geometry fix: the canvas the userland reads — 2026-10-20
 
 The Rain device tree gave the userland a `720x1650` canvas, but the kernel

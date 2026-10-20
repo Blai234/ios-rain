@@ -197,6 +197,46 @@ class RainFbScaleTest(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             self.assertIn('RAIN FB SCALE OK', run.stdout)
 
+    def test_scaled_digitizer_uses_unit_coordinates(self):
+        """Execute the patch's equations against the HID 16.16 unit range."""
+        cc = compiler()
+        if cc is None:
+            self.skipTest('no host C++ compiler')
+        source = self.patch.read_text(encoding='utf-8')
+        body = source.split('+\tif (fScale) {', 1)[1]
+        body = body.split('+\t} else {', 1)[0]
+        body = '\n'.join(line[1:] for line in body.splitlines() if line.startswith('+'))
+        harness = r'''
+#include <stdint.h>
+typedef int32_t IOFixed;
+static bool check(int x, int y, int want_x, int want_y) {
+    const int fPanelW = 720, fPanelH = 1650;
+    [[maybe_unused]] const int fLogicalW = 1125, fLogicalH = 2436;
+    IOFixed nx, ny;
+BODY
+    return nx == want_x && ny == want_y &&
+        nx >= 0 && nx < 65536 && ny >= 0 && ny < 65536;
+}
+int main() {
+    // Centre, origin, far edge, and a swipe from bottom to centre.
+    if (!check(360, 825, 32768, 32768)) return 1;
+    if (!check(0, 0, 0, 0)) return 2;
+    if (!check(719, 1649, 65444, 65496)) return 3;
+    for (int y = 1649; y >= 825; --y)
+        if (!check(360, y, 32768, (int)((int64_t)y * 65536 / 1650))) return 4;
+    return 0;
+}
+'''.replace('BODY', body)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            source_file = tmp / 'touch.cpp'
+            source_file.write_text(harness, encoding='utf-8')
+            binary = tmp / ('touch.exe' if os.name == 'nt' else 'touch')
+            subprocess.run([cc, '-std=c++17', '-Wall', '-Wextra', '-Werror',
+                            str(source_file), '-o', str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, 'digitizer is outside its HID unit range')
+
 
 if __name__ == '__main__':
     unittest.main()

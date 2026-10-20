@@ -1,5 +1,39 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain Hello screen and missing touch input (2026-10-20, latest)
+
+The user reached the iOS 16 Hello screen in `IMG_0170.jpeg` after the
+temporary scaled-console boot. The greeting, status bar, charging icon and
+home indicator are visible. A swipe does nothing; tapping the lower-right
+information button also does nothing. This is a confirmed input blocker, not
+evidence of a swipe-only gesture problem. No partition was flashed.
+
+With the user's permission, FASTBOOT product `rain` was confirmed and the
+previously saved OrangeFox image was temporarily booted (send/boot OKAY).
+Recovery ADB reports `spi0.0` bound to `fts_ts` and an input device with ten
+slots, X 0..719, Y 0..1649. Its boot log identifies FT8006S, Focaltech driver
+V3.2.2, chip ID 0x8642, and a 131072-byte firmware download from
+`focaltech_ts_fw_xinli.bin`. The live DT puts the controller under GENI SPI
+at `0x04a80000`, chip select 0, with SPI pins GPIO 0..3, IRQ GPIO 80 and
+reset GPIO 86. A filtered report is in ignored
+`research/rain-touch-2026-10-20.json`; a private copy of the phone's firmware
+is in ignored `research/rain-focaltech_ts_fw_xinli.bin` (SHA-256
+`3a25763bd02eff18ea00731a5c2167c75514ca4c42f16bcb14897ea0aa2b4837`).
+Neither device dump nor firmware is committed.
+
+The current XNU driver in patch 0060 only probes Goodix/Focaltech over Sweet's
+GENI I2C bus, so it cannot read this SPI controller. The Rain HID scaling
+branch also used pixel values where the digitizer expects normalized 16.16
+coordinates; patch 0082 now corrects that arithmetic and a host test covers
+screen corners and a vertical swipe. This mapping fix alone cannot restore
+touch: Rain needs a GENI SPI transport, FT8006S firmware loader, report parser,
+and GPIO/clock setup. Xiaomi's official dandelion FT8006S SPI source was saved
+under ignored `research/` as a protocol reference; it is a different board,
+so its GPIO and clocks must not be copied. Next: implement and build a
+Rain-gated driver, then use a temporary boot to test the information button
+and Hello swipe. The phone is currently in OrangeFox recovery; Android has
+not been modified.
+
 ## Rain scaled console boot: userland still advancing (2026-10-20, latest)
 
 The one-core scaled image from `xnu/out-rain-ci/swaplog/` was temporarily
