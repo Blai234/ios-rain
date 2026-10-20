@@ -112,6 +112,14 @@ The logo sits at the centre of the panel, which is what the crop geometry
 predicts: the iOS canvas centre (562, 1218) maps to the panel centre
 (360, 825) with the crop offsets 202 and 393.
 
+**Who drew the logo.** The kernel has no boot-logo code: the only "logo"
+strings in the patch series are the HID usage tables and a topaz comment.
+So the Apple logo on the panel was rendered by the iOS userland and
+swapped to the panel through the IOSurface path. The userland is
+therefore not only running, it is drawing, and the present path is
+copying its frames to the panel. The console is muted because the first
+swap happened, and the frame that arrived is the iOS boot logo.
+
 **What this does not show.** The console is muted from the first swap on,
 and the persistent log is disabled in the volatile overlay mode, so the
 `AppleM2ScalerCSCDriver` line can no longer be read: the handoff confirms
