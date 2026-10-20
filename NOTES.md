@@ -218,6 +218,38 @@ lever is the CPU count: `cpus=4` (the four Gold cores) is four times
 faster, but the four-CPU boots corrupted the HFS catalog, so that has to
 be understood first.
 
+### The 1744 MiB window is validated and booted — 2026-10-20
+
+OrangeFox recovery was booted temporarily (`fastboot boot
+orangefox-rain-recovery.img`, nothing flashed) and `/proc/iomem` read
+over root adb. The recovery has no `su` and still exits 0 with the error
+on stdout, so `tools/check_rain_memory.py` now parses the output instead
+of trusting the exit status.
+
+The live map has exactly one reservation above `0x70000000`:
+`0xf3c00000-0xffbfffff : reserved`. Everything else up there is System
+RAM (`80000000-13fffffff`).
+
+| Window | Result |
+| --- | --- |
+| `0x83000000+0x6d000000` (1744 MiB) | **free** |
+| `0xb0000000+0x40000000` (1024 MiB, the old one) | free |
+| `0x83000000+0x70c00000` (1804 MiB, up to the reservation) | free |
+| `0x83000000+0x80000000` | rejected: overlaps the reservation |
+
+The device tree's fixed `reserved-memory` nodes all end below
+`0x63900000`, so the 1744 MiB window is clear of them as well.
+
+The crop image for the new window,
+`xnu/out-rain-ci/bigram/rain-display-crop-shim/shim-boot.img`
+(21,934,080 bytes, SHA-256
+`84d65d454349d8c30a7b557ac17ae1c970b78d879766e97b96f074434d1c45e3`),
+was booted on the phone: send OKAY 0.463 s, boot OKAY 0.338 s, nothing
+flashed. The phone left fastboot and stayed out of adb.
+
+The scaled and console variants for the same window are in the same
+directory. The screen result is pending.
+
 ## Rain console A/B test (2026-10-20, latest)
 
 On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded

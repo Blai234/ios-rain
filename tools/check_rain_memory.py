@@ -44,14 +44,24 @@ def check_iomem(data, base=PHYS_BASE, size=MEM_SIZE):
 
 
 def read_iomem(adb):
-    """The live /proc/iomem, with or without a root shell on the device."""
+    """The live /proc/iomem, with or without a root shell on the device.
+
+    A recovery has no `su` and still exits 0 with the error on stdout, so
+    the output has to be parsed, not just the exit status.
+    """
+    errors = []
     for command in (['su', '-c', 'cat /proc/iomem'], ['cat', '/proc/iomem']):
         try:
-            return subprocess.check_output([str(adb), 'exec-out', *command],
-                                           timeout=20).decode('ascii')
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            out = subprocess.run([str(adb), 'exec-out', *command],
+                                 capture_output=True, timeout=20)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            errors.append(f'{command}: {error}')
             continue
-    raise SystemExit('could not read /proc/iomem over adb')
+        data = out.stdout.decode('ascii', 'replace')
+        if any(LINE.match(line) for line in data.splitlines()):
+            return data
+        errors.append(f'{" ".join(command)}: {data.strip()[:80]}')
+    raise SystemExit('could not read /proc/iomem over adb: ' + '; '.join(errors))
 
 
 def main():
