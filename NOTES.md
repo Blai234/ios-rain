@@ -350,6 +350,32 @@ overlay (store the changed 512-byte sector instead of the whole block),
 which would also make the 512 MiB cap eight times more effective. That
 is a change to `0082-zrain-ufs-cow.patch` and needs a CI build.
 
+### The swap records are now readable — 2026-10-20
+
+`present()` muted the console *before* it logged the swap records, so with
+`sweetfb_noconsole=1` the only description of what the userland presents
+(surface size, pixel format, row stride, source and destination
+rectangles) was never drawn. `0082-zrain-fb-swap-log.patch` moves the
+mute after the logging loop: the first frame's records are drawn just
+before the console goes quiet, so they stay on the panel for the rest of
+the boot.
+
+CI run `39411670518` (commit `fb7e26d`) passed. Artifact ZIP SHA-256
+`1f09ce0d5887d660ce12189e8ddbe49fc8c78f42d4099b3da7db2fd232bdbd48`,
+kernel SHA-256
+`376705a0c3773960c7908c8d7d56215b140f4f1ab5646161235e5bcca4866240`
+(17,628,976 bytes, in `xnu/out-rain-ci/swaplog/`).
+
+The images for it (all on the aligned 1792 MiB window):
+
+| Variant | Image SHA-256 |
+| --- | --- |
+| `rain-display-crop-aligned` | `896ae06b…` |
+| `rain-display-scaled-aligned` | `b4db26e7…` |
+| `rain-display-console-aligned` | `30eb5e6a…` |
+| `rain-display-cpus4-aligned` | `7ebd1174…` |
+| `rain-display-cpus4console-aligned` | `b993b0e5…` |
+
 ## Rain console A/B test (2026-10-20, latest)
 
 On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded
