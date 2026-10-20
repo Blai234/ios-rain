@@ -33,7 +33,14 @@ CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogres
            'launchd_unsecure_cache=1 sweetnull=SpringBoard sweetfb_noconsole=1 '
            'rainseedmigration=1')
 
-VARIANTS = (('crop', ''), ('scaled', ' sweetfb_scale=1'))
+# The console variant keeps the kernel console alive. sweetfb_noconsole=1
+# mutes it on the first swapped frame and the persistent log is off in the
+# volatile overlay mode, so this is the only way to read the log while the
+# userland is stuck.
+CONSOLE_CMDLINE = CMDLINE.replace(' sweetfb_noconsole=1', '')
+
+VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
+            ('console', CONSOLE_CMDLINE))
 
 
 def sha256(data):
@@ -46,6 +53,15 @@ def build_adt(path, seed=None):
     blob = adt.serialize(tree)
     path.write_bytes(blob)
     return blob
+
+
+def kernel_seed(kernel_bytes):
+    """A deterministic ADT seed, so the same kernel gives the same image.
+
+    The seed feeds the kernel's PRNG. Deriving it from the kernel digest
+    keeps it unpredictable per build and makes the boot image reproducible.
+    """
+    return hashlib.sha256(kernel_bytes + b'rain-adt-seed').digest() * 2
 
 
 def main():
@@ -67,16 +83,16 @@ def main():
         parser.error(f'{args.kernel} missing; download the Rain CI kernel first')
     args.outdir.mkdir(parents=True, exist_ok=True)
     adt_path = args.adt or (args.outdir / 'rain-display.adt')
+    kernel_bytes = args.kernel.read_bytes()
     if args.adt:
         adt_blob = args.adt.read_bytes()
     else:
-        adt_blob = build_adt(adt_path)
+        adt_blob = build_adt(adt_path, kernel_seed(kernel_bytes))
     print(f'ADT {adt_path}: {len(adt_blob)} bytes')
 
-    report = {'kernel': str(args.kernel), 'kernel_sha256': sha256(args.kernel.read_bytes()),
+    report = {'kernel': str(args.kernel), 'kernel_sha256': sha256(kernel_bytes),
               'adt': str(adt_path), 'adt_sha256': sha256(adt_blob), 'variants': {}}
-    for name, extra in VARIANTS:
-        cmdline = CMDLINE + extra
+    for name, cmdline in VARIANTS:
         blob, info = mkpayload.build(args.kernel, adt_path, cmdline)
         checks = validate(blob, allow_volatile_ufs=True)
         payload = args.outdir / f'rain-display-{name}.payload'

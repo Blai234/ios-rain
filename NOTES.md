@@ -70,29 +70,25 @@ the kernel inside matches its own manifest, SHA-256
 `61414c625d3219f1102ec260847ad2822d57a77530430fd332d63772cb148bee`
 (17,628,976 bytes, in `xnu/out-rain-ci/display/`).
 
-`tools/prepare_rain_display_test.py` built the two temporary images. Both
+`tools/prepare_rain_display_test.py` built the temporary images. All three
 carry the new ADT (canvas `1125x2436`), the volatile UFS overlay
 (`ufscow=1 rootrw=1`, no `ufsrw`), `cpus=1` and the last boot's arguments
 minus `rainquietscaler=1`: the `AppleM2ScalerCSCDriver` message has to stay
-visible to see whether the canvas fix removed the lookup.
+visible to see whether the canvas fix removed the lookup. The ADT seed is
+derived from the kernel digest, so the same kernel gives the same image.
 
 | Image | SHA-256 | Bytes |
 | --- | --- | --- |
-| `xnu/out-rain-ci/display/rain-display-crop-shim/shim-boot.img` | `4b7666e1f1bc2488d602da58a42e0047b930470d6797498ce8a44c2b1b389847` | 21,934,080 |
-| `xnu/out-rain-ci/display/rain-display-scaled-shim/shim-boot.img` | `aa3ce63f82a5850dda7a7caf487bd21622646c91ff54a2cfe4857ece20ea0c4f` | 21,934,080 |
+| `xnu/out-rain-ci/display/rain-display-crop-shim/shim-boot.img` | `5404b6e7d2fd0438e6af6343ae3e2bb7244b07e7cc86d32a64dc8b28544d78d3` | 21,934,080 |
+| `xnu/out-rain-ci/display/rain-display-scaled-shim/shim-boot.img` | `d22b870af734079af4fecac31b2075556880d90a3dd5614ee69769fe19813db6` | 21,934,080 |
+| `xnu/out-rain-ci/display/rain-display-console-shim/shim-boot.img` | `51606b0c8d28004e6f7a1d0ea42e0978795eb666a5bedc9e0c5dd3ffa2b41ee0` | 21,934,080 |
 
-The only difference is `sweetfb_scale=1` in the scaled one. Test procedure:
+The crop and scaled images differ only in `sweetfb_scale=1`. The console
+image is the crop image without `sweetfb_noconsole=1`, so the kernel
+console stays alive and the log can be read while the userland runs.
 
-1. `adb reboot bootloader`, then `fastboot getvar product` must say `rain`.
-2. `fastboot boot xnu/out-rain-ci/display/rain-display-crop-shim/shim-boot.img`
-   (RAM only, nothing is flashed).
-3. Watch the screen: with `sweetfb_noconsole=1` the console stops on the
-   first swapped frame, so a still-scrolling console means no swap. Note
-   whether the `AppleM2ScalerCSCDriver` line is still there.
-4. Then the same with the scaled image.
-
-`tools/prepare_rain_display_test.py --image` rebuilds both, including the
-boot-v3 wrapper, from any kernel file.
+`tools/prepare_rain_display_test.py --image` rebuilds all three, including
+the boot-v3 wrapper, from any kernel file.
 
 ### First graphical handoff on Rain — 2026-10-20
 
@@ -132,6 +128,25 @@ has to give way to the lock screen. If it does, the scaled image
 (`sweetfb_scale=1`) is the next test, to see the whole canvas instead of
 its centre crop. If the logo stays, the userland is stuck in the early
 boot and the console has to come back for the log.
+
+### The boot logo does not go away — 2026-10-20
+
+The phone was still on the Apple logo more than five minutes after the
+boot. Sweet's own README puts the Apple-logo phase at about four minutes
+and topaz reached the lock screen in about three, so this is past the
+expected time, but it is not a proof of a stall: the screen only shows
+the last presented frame, and nothing says the frame is still being
+updated.
+
+The console cannot answer: it is muted from the first swap and the
+persistent log is off in the volatile overlay mode. So the next test is a
+boot **without** `sweetfb_noconsole=1` (the console image above): the
+console keeps drawing over the panel, but the log is readable, and the
+`AppleM2ScalerCSCDriver` line is in it if the scaler lookup is still
+happening.
+
+The userland reached the logo, so the display path is proven; the
+question now is what the userland is waiting for after the logo.
 
 ## Rain console A/B test (2026-10-20, latest)
 
