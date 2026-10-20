@@ -23,6 +23,16 @@ Fixed in this session:
 
 Not built and not booted yet: see `NOTES.md`.
 
+CI run `39398527488` (commit `bf42ee7e`) passed with the new patch. The
+kernel SHA-256 is `61414c625d3219f1102ec260847ad2822d57a77530430fd332d63772cb148bee`.
+`tools/prepare_rain_display_test.py` built two temporary images that differ
+in one boot argument (`sweetfb_scale=1`): the crop
+`xnu/out-rain-ci/display/rain-display-crop-shim/shim-boot.img` (SHA-256
+`4b7666e1f1bc2488d602da58a42e0047b930470d6797498ce8a44c2b1b389847`) and
+the scaled
+`xnu/out-rain-ci/display/rain-display-scaled-shim/shim-boot.img` (SHA-256
+`aa3ce63f82a5850dda7a7caf487bd21622646c91ff54a2cfe4857ece20ea0c4f`).
+
 The verified Rain nullfilter image was temporarily booted on 2026-10-20:
 FASTBOOT product `rain`; send OKAY 0.472 s, boot OKAY 0.388 s. `IMG_0159.jpeg`
 shows its backboardd scaler message still flooding the console. A second

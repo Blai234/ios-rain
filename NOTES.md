@@ -61,6 +61,39 @@ booted. The next action is a CI build of the `rain` series and a temporary
 `fastboot boot` of the resulting image, first without `sweetfb_scale=1` (the
 crop, to see whether the GUI appears at all) and then with it.
 
+### The build and the two prepared images
+
+CI run `39398527488` (commit `bf42ee7e`) **passed**: the new header, the
+framebuffer change and the digitizer change all compile. The artifact ZIP
+SHA-256 is `c2e129b5e103cc86b0905bcadff452173a0b449eed94209058b7542eb3572479`;
+the kernel inside matches its own manifest, SHA-256
+`61414c625d3219f1102ec260847ad2822d57a77530430fd332d63772cb148bee`
+(17,628,976 bytes, in `xnu/out-rain-ci/display/`).
+
+`tools/prepare_rain_display_test.py` built the two temporary images. Both
+carry the new ADT (canvas `1125x2436`), the volatile UFS overlay
+(`ufscow=1 rootrw=1`, no `ufsrw`), `cpus=1` and the last boot's arguments
+minus `rainquietscaler=1`: the `AppleM2ScalerCSCDriver` message has to stay
+visible to see whether the canvas fix removed the lookup.
+
+| Image | SHA-256 | Bytes |
+| --- | --- | --- |
+| `xnu/out-rain-ci/display/rain-display-crop-shim/shim-boot.img` | `4b7666e1f1bc2488d602da58a42e0047b930470d6797498ce8a44c2b1b389847` | 21,934,080 |
+| `xnu/out-rain-ci/display/rain-display-scaled-shim/shim-boot.img` | `aa3ce63f82a5850dda7a7caf487bd21622646c91ff54a2cfe4857ece20ea0c4f` | 21,934,080 |
+
+The only difference is `sweetfb_scale=1` in the scaled one. Test procedure:
+
+1. `adb reboot bootloader`, then `fastboot getvar product` must say `rain`.
+2. `fastboot boot xnu/out-rain-ci/display/rain-display-crop-shim/shim-boot.img`
+   (RAM only, nothing is flashed).
+3. Watch the screen: with `sweetfb_noconsole=1` the console stops on the
+   first swapped frame, so a still-scrolling console means no swap. Note
+   whether the `AppleM2ScalerCSCDriver` line is still there.
+4. Then the same with the scaled image.
+
+`tools/prepare_rain_display_test.py --image` rebuilds both, including the
+boot-v3 wrapper, from any kernel file.
+
 ## Rain console A/B test (2026-10-20, latest)
 
 On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded
