@@ -36,5 +36,6 @@ void thread_block(int state);
 void delay(int ms);
 int kernel_thread_start(void (*fn)(void *, wait_result_t), void *arg, thread_t *th);
 void thread_deallocate(thread_t th);
+void sweet_hid_touch(int finger, int down, int x, int y);
 
 #endif /* RAIN_FTS_STUBS_H */

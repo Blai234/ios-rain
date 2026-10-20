@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,524 @@
+@@ -0,0 +1,635 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -145,7 +145,10 @@ index 0000000..db48221
 +#define FTS_DUMMY_BYTES     3u
 +#define FTS_MAX_XFER        256u
 +#define FTS_CHIP_ID_REG     0x90u    /* FTS_CMD_READ_ID */
++#define FTS_FW_VER_REG      0xa6u    /* firmware version in app mode */
 +#define FTS_MAX_TOUCH       10u
++#define FTS_TOUCH_REG       0x01u    /* touch data starts here */
++#define FTS_TOUCH_LEN       62u      /* 2 header + 60 point bytes */
 +
 +static struct {
 +	vm_offset_t geni, tlmm;
@@ -153,6 +156,8 @@ index 0000000..db48221
 +	uint32_t tx_depth, tx_width, rx_depth, rx_width;
 +	uint32_t irq_last;
 +	uint32_t fw, status, pin_cfg[11];
++	uint32_t active;
++	int x[FTS_MAX_TOUCH], y[FTS_MAX_TOUCH];
 +} st;
 +static int fts_sleep_chan;
 +
@@ -447,10 +452,89 @@ index 0000000..db48221
 +}
 +
 +static void
++fts_touch_report(uint32_t mask, const int *x, const int *y)
++{
++	for (unsigned id = 0; id < FTS_MAX_TOUCH; ++id) {
++		uint32_t bit = 1u << id;
++		if (mask & bit) {
++			if (!(st.active & bit) || x[id] != st.x[id] ||
++			    y[id] != st.y[id]) {
++				sweet_hid_touch((int)id, 1, x[id], y[id]);
++			}
++			st.x[id] = x[id];
++			st.y[id] = y[id];
++		} else if (st.active & bit) {
++			sweet_hid_touch((int)id, 0, st.x[id], st.y[id]);
++		}
++	}
++	st.active = mask;
++}
++
++/* Read and parse one FT8006S touch frame from register 0x01. */
++static int
++fts_poll_touch(void)
++{
++	uint8_t cmd = FTS_TOUCH_REG;
++	uint8_t buf[FTS_TOUCH_LEN + 2u];
++	int x[FTS_MAX_TOUCH] = {0}, y[FTS_MAX_TOUCH] = {0};
++	uint32_t mask = 0, seen = 0;
++	uint16_t calc, recv;
++
++	int err = fts_read(&cmd, 1, buf, FTS_TOUCH_LEN);
++	if (err) {
++		return err;
++	}
++	calc = fts_crc(buf, FTS_TOUCH_LEN);
++	recv = (uint16_t)((buf[FTS_TOUCH_LEN + 1u] << 8) | buf[FTS_TOUCH_LEN]);
++	if (calc != recv) {
++		return EIO;
++	}
++	unsigned n = buf[1] & 0x0fu;
++	if (n > FTS_MAX_TOUCH) {
++		return EIO;
++	}
++	if (n == 0) {
++		fts_touch_report(0, st.x, st.y);
++		return 0;
++	}
++	for (unsigned i = 0; i < n; ++i) {
++		const uint8_t *p = buf + 2u + 6u * i;
++		unsigned id = p[2] >> 4;
++		unsigned event = p[0] >> 6;
++		if (id >= FTS_MAX_TOUCH) {
++			break;
++		}
++		if (seen & (1u << id)) {
++			return EIO;
++		}
++		seen |= 1u << id;
++		if (event == 1u) {
++			continue;
++		}
++		unsigned px = ((unsigned)(p[0] & 0x0fu) << 8) | p[1];
++		unsigned py = ((unsigned)(p[2] & 0x0fu) << 8) | p[3];
++		if (px > 719 || py > 1649) {
++			return EIO;
++		}
++		mask |= 1u << id;
++		x[id] = (int)px;
++		y[id] = (int)py;
++	}
++	fts_touch_report(mask, x, y);
++	return 0;
++}
++
++static void
 +fts_thread(void *arg __unused, wait_result_t result __unused)
 +{
 +	uint32_t cfg;
++	unsigned delay_s = 5;
 +
++	(void)PE_parse_boot_argn("rainftsdelay", &delay_s, sizeof(delay_s));
++	if (delay_s > 0) {
++		printf("RAIN FTS: starting in %u s\n", delay_s);
++		fts_sleep(delay_s * 1000u);
++	}
 +	st.geni = ml_io_map(FTS_GENI_PA, FTS_GENI_LEN);
 +	st.tlmm = ml_io_map(FTS_TLMM_PA, FTS_TLMM_LEN);
 +	if (st.geni == 0 || st.tlmm == 0) {
@@ -501,23 +585,50 @@ index 0000000..db48221
 +	 */
 +	int tx = 0;
 +	PE_parse_boot_argn("rainftstx", &tx, sizeof(tx));
-+	if (tx) {
-+		fts_se_setup(4u);
-+		fts_probe_id();
++	if (!tx) {
++		printf("RAIN FTS: survey only (rainftstx=1 to enable transfers)\n");
++		for (unsigned n = 0; n < 18; n++) {
++			fts_sleep(10000);
++			printf("RAIN FTS: cached fw=%#x status=%#x fifo=%u/%u,%u/%u gpio0=%#x gpio1=%#x gpio2=%#x gpio3=%#x irq80=%#x rst86=%#x\n",
++			    st.fw, st.status, st.tx_depth, st.tx_width, st.rx_depth,
++			    st.rx_width, st.pin_cfg[0], st.pin_cfg[1], st.pin_cfg[2],
++			    st.pin_cfg[3], st.pin_cfg[4], st.pin_cfg[10]);
++		}
++		return;
++	}
++
++	fts_se_setup(4u);
++	fts_probe_id();
++
++	/* Try to read the app-mode firmware version: a non-zero reply means
++	 * the controller has firmware loaded and will produce touch reports. */
++	uint8_t fwcmd = FTS_FW_VER_REG;
++	uint8_t fwbuf[4];
++	int fwerr = fts_read(&fwcmd, 1, fwbuf, 2);
++	if (!fwerr) {
++		printf("RAIN FTS: fw version %02x %02x\n", fwbuf[0], fwbuf[1]);
 +	} else {
-+		printf("RAIN FTS: no transfer (rainftstx=1 to do it)\n");
++		printf("RAIN FTS: fw version read failed: %d (controller may be in boot mode)\n", fwerr);
 +	}
-+	printf("RAIN FTS: stage 1 done\n");
-+	/* The userland soon paints over the early console. Repeat the cached
-+	 * survey for a short time so a photo can capture it without touching
-+	 * a clock-gated MMIO block again. This is a diagnostic-only boot. */
-+	for (unsigned n = 0; n < 18; n++) {
-+		fts_sleep(10000);
-+		printf("RAIN FTS: cached fw=%#x status=%#x fifo=%u/%u,%u/%u gpio0=%#x gpio1=%#x gpio2=%#x gpio3=%#x irq80=%#x rst86=%#x\n",
-+		    st.fw, st.status, st.tx_depth, st.tx_width, st.rx_depth,
-+		    st.rx_width, st.pin_cfg[0], st.pin_cfg[1], st.pin_cfg[2],
-+		    st.pin_cfg[3], st.pin_cfg[4], st.pin_cfg[10]);
++
++	printf("RAIN FTS: entering touch poll (10 ms interval)\n");
++	unsigned errors = 0;
++	while (!st.dead) {
++		int err = fts_poll_touch();
++		if (err) {
++			if ((errors++ % 200u) == 0) {
++				printf("RAIN FTS: touch err=%d count=%u\n", err, errors);
++			}
++			if (errors == 10) {
++				fts_touch_report(0, st.x, st.y);
++			}
++		} else {
++			errors = 0;
++		}
++		fts_sleep(10);
 +	}
++	fts_touch_report(0, st.x, st.y);
++	printf("RAIN FTS: touch poll ended\n");
 +}
 +
 +void
