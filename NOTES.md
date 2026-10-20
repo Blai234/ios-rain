@@ -1,5 +1,36 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain scaled console boot: userland still advancing (2026-10-20, latest)
+
+The one-core scaled image from `xnu/out-rain-ci/swaplog/` was temporarily
+booted with `fastboot boot` (send/boot OKAY). After roughly five minutes the
+Apple logo was still visible, so scaling alone did not reveal a lock screen.
+No partition was flashed.
+
+To keep this A/B test controlled, `tools/prepare_rain_display_test.py` now
+offers `scaled-console` and `--variant`. The diagnostic image uses the same
+kernel SHA-256 `376705a0c3773960c7908c8d7d56215b140f4f1ab5646161235e5bcca4866240`
+and ADT SHA-256 `4a6589461c7d08dadddce0e38e1fcfbaac83e3ec516f13a63f2970fd8451159a`
+as the scaled image. Its command line differs only by removing
+`sweetfb_noconsole=1`; it keeps `cpus=1`, `ufscow=1`,
+`rainseedmigration=1` and `sweetfb_scale=1`. Payload validation passed
+(10 segments, entry PA `0x814a6488`). Image:
+`xnu/out-rain-ci/swaplog/diagnostic/rain-display-scaled-consolealigned-shim/shim-boot.img`,
+21,934,080 bytes, SHA-256
+`24aceeff3e3265196d1560563e54a47408c072a0556c092362ce7a4be11d4206`.
+FASTBOOT product `rain`; temporary boot send OKAY 0.468 s, boot OKAY 0.337 s.
+
+`IMG_0167.jpeg` to `IMG_0169.jpeg` show the logo with the console overlay.
+The log progresses from `chronod`, `tccd` and `securityd` to `mDNSResponder`,
+`callservicesd`, `accounts` and `symptomsd`, with `SWEET FB: swap 7 layer 0
+surface 3 1125x2436 fmt 0x42475241 bpr 4608`. `CommCenter` crashes and
+restarts, but other services continue to launch; no kernel panic is visible.
+This is **not yet evidence of a stall**. The earlier Sweet first-boot migration
+took about an hour, and Rain's completion status is still unknown. Let the
+current boot continue and compare a later photo/log. If services stop advancing
+or the COW overlay reaches its cap, investigate that specific failure before
+changing display code.
+
 ## Rain display geometry: the canvas/framebuffer mismatch (2026-10-20, latest)
 
 The phone has never swapped a frame to the panel: `sweetfb_noconsole=1` is set,

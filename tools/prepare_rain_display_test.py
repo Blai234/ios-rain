@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Prepare the two Rain display-geometry test images.
+"""Prepare Rain display-geometry and console test images.
 
 The Rain device tree now presents the iPhone X canvas (1125x2436) to the
 userland, which is what the kernel reports through GetDisplaySize. Without
 `sweetfb_scale=1` the kernel shows the centre crop of that canvas on the
 720x1650 panel; with it the canvas is resampled into the panel.
 
-The two images differ in one boot argument, so a phone test can tell which
-behaviour works. Nothing is flashed: the result is a temporary boot image.
+The selected variants differ only in boot arguments, so a phone test can
+isolate display scaling and console muting. Nothing is flashed: the result is
+a temporary boot image.
 """
 import argparse
 import hashlib
@@ -51,7 +52,9 @@ CPUS4_CMDLINE = CMDLINE.replace('cpus=1', 'cpus=4')
 CPUS4_CONSOLE_CMDLINE = CONSOLE_CMDLINE.replace('cpus=1', 'cpus=4')
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
-            ('console', CONSOLE_CMDLINE), ('cpus4', CPUS4_CMDLINE),
+            ('console', CONSOLE_CMDLINE),
+            ('scaled-console', CONSOLE_CMDLINE + ' sweetfb_scale=1'),
+            ('cpus4', CPUS4_CMDLINE),
             ('cpus4console', CPUS4_CONSOLE_CMDLINE))
 
 
@@ -93,6 +96,8 @@ def main():
     parser.add_argument('--size', type=lambda v: int(v, 0),
                         help='Rain RAM window size (default from tools/mkadt.py)')
     parser.add_argument('--tag', default='', help='suffix for the output files')
+    parser.add_argument('--variant', choices=[name for name, _ in VARIANTS],
+                        help='build only this variant')
     parser.add_argument('--image', action='store_true',
                         help='also build the boot-v3 image for each variant')
     args = parser.parse_args()
@@ -112,6 +117,8 @@ def main():
     report = {'kernel': str(args.kernel), 'kernel_sha256': sha256(kernel_bytes),
               'adt': str(adt_path), 'adt_sha256': sha256(adt_blob), 'variants': {}}
     for name, cmdline in VARIANTS:
+        if args.variant and name != args.variant:
+            continue
         blob, info = mkpayload.build(args.kernel, adt_path, cmdline)
         checks = validate(blob, allow_volatile_ufs=True, base=args.base, size=args.size)
         payload = args.outdir / f'rain-display-{name}{args.tag}.payload'
