@@ -12,10 +12,10 @@ index 6630131..65f9dd2 100644
  bsd/dev/sweet_spmi.c			standard
 diff --git a/bsd/dev/sweet_fts.c b/bsd/dev/sweet_fts.c
 new file mode 100644
-index 0000000..15a9852
+index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,503 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -52,9 +52,18 @@ index 0000000..15a9852
 +/* Hardware. */
 +#define FTS_GENI_PA      0x04a80000u
 +#define FTS_GENI_LEN     0x00004000u
-+#define FTS_TLMM_PA      0x00400000u
++/*
++ * The TLMM (the device tree's pinctrl@400000) is not flat: the GPIO number
++ * selects a tile and the pin sits at tile + number * 0x1000. On this SoC
++ * (the bengal pinctrl driver) the tiles are WEST at +0x100000, SOUTH at
++ * +0x500000, EAST at +0x900000 and the base tile is unused. The touch's
++ * pins are all in WEST: GPIO 0..3 are the qup0 SPI pins, GPIO 80 is the
++ * interrupt and GPIO 86 the reset. Reading a pin in the wrong tile hits
++ * an unimplemented register aperture, which aborts the board.
++ */
++#define FTS_TLMM_PA      0x00500000u
++#define FTS_TLMM_LEN     0x00060000u
 +#define FTS_TLMM_STRIDE  0x00001000u
-+#define FTS_TLMM_LEN     0x000c0000u
 +#define FTS_SPI_PINS     0u          /* GPIO 0..3: the qup0 SPI pins */
 +#define FTS_SPI_PIN_N    4u
 +#define FTS_IRQ_GPIO     80u

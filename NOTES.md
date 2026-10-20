@@ -1,6 +1,43 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Rain touch driver, stage 1: the GENI SPI transport — 2026-10-20
+## The touch driver rebooted the phone three times: the TLMM tiles — 2026-10-20
+
+Every touch boot ended with the phone rebooting into the recovery, and it
+did so even when the driver only *read* the registers. The cause is the
+TLMM layout: the device tree's `pinctrl@400000` is **not flat**. The
+number selects a tile and the pin sits at `tile + number * 0x1000`, and
+on this SoC (the bengal pinctrl driver,
+`drivers/pinctrl/qcom/pinctrl-bengal.c`) the tiles are
+
+| tile | offset | pins |
+| --- | --- | --- |
+| (unused) | `0x000000` | none |
+| WEST | `0x100000` | 0-7, 12-17, 65-71, 80-86, 89, 92-97 |
+| SOUTH | `0x500000` | 72-79, 98-112 |
+| EAST | `0x900000` | 8-11, 18-64, 87-88, 90-91 |
+
+The driver's first guess (`0x400000 + pin * 0x1000`) landed in the unused
+tile, and reading an unimplemented register aperture on a Qualcomm SoC
+raises an SError abort, which takes the kernel down. The touch's pins
+are all in WEST, so the base is `0x500000`:
+
+| pin | address | function |
+| --- | --- | --- |
+| GPIO 0-3 | `0x500000`..`0x503000` | qup0 (the SPI pins) |
+| GPIO 80 | `0x550000` | the interrupt |
+| GPIO 86 | `0x556000` | the reset |
+
+The board's own `khaje-pinctrl.dtsi` confirms the touch lines: GPIO 86 is
+`ts_reset` (drive strength 8 mA, pull up when active) and GPIO 80 is
+`ts_release`. Note that the device tree's drive strength is in mA while
+the register field is a three bit encoding, which is a second reason the
+first driver's `drive = 8` was wrong: it set the output enable bit
+instead and turned the interrupt pin into an output.
+
+The driver now reads the pins at their real addresses, and the serial
+engine programming and the transfers are still behind `rainftstx=1`.
+
+## Rain touch driver, stage 1: the GENI SPI transport - 2026-10-20
 
 The Hello screen is reached and rendered (the other agent's `IMG_0170.jpeg`),
 so input is the only blocker left. Rain's touchscreen is a Focaltech
