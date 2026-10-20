@@ -12,10 +12,10 @@ index 6630131..65f9dd2 100644
  bsd/dev/sweet_spmi.c			standard
 diff --git a/bsd/dev/sweet_fts.c b/bsd/dev/sweet_fts.c
 new file mode 100644
-index 0000000..2452c23
+index 0000000..15a9852
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,474 @@
+@@ -0,0 +1,494 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -171,6 +171,15 @@ index 0000000..2452c23
 +	thread_block(THREAD_CONTINUE_NULL);
 +}
 +
++/* The poll loops use the kernel's delay(): assert_wait_deadline with a
++ * deadline in the past does not necessarily leave the thread runnable, and
++ * a thread that blocks there never finishes. */
++static void
++fts_pause(void)
++{
++	delay(1);
++}
++
 +/* The TLMM configuration of one pin: function, pull, drive and direction.
 + *
 + * The layout is: the pull in bits [1:0], the function in bits [5:2], the
@@ -285,7 +294,7 @@ index 0000000..2452c23
 +				break;
 +			}
 +			fts_wr(st.geni, SE_TX_WM, 1u);
-+			fts_sleep(0);
++			fts_pause();
 +		}
 +		for (unsigned i = 0; i < n; i++) {
 +			word |= (uint32_t)tx[sent + i] << (8u * i);
@@ -322,7 +331,7 @@ index 0000000..2452c23
 +			return got >= rxlen ? 0 : EIO;
 +		}
 +		fts_wr(st.geni, SE_IRQ_CLR, irq & (M_RX_FIFO_WM_EN | M_RX_FIFO_LAST_EN | M_TX_FIFO_WM_EN));
-+		fts_sleep(0);
++		fts_pause();
 +	}
 +	printf("RAIN FTS: SPI transfer timed out, irq=%#x status=%#x\n",
 +	    st.irq_last, fts_rd(st.geni, SE_STATUS));
@@ -465,8 +474,19 @@ index 0000000..2452c23
 +	}
 +
 +	fts_survey();
-+	fts_se_setup(4u);
-+	fts_probe_id();
++	/*
++	 * Programming the serial engine and moving bytes is a separate step:
++	 * the survey above only reads. A wrong register write can take the
++	 * board down, so the transfers wait for rainftstx=1.
++	 */
++	int tx = 0;
++	PE_parse_boot_argn("rainftstx", &tx, sizeof(tx));
++	if (tx) {
++		fts_se_setup(4u);
++		fts_probe_id();
++	} else {
++		printf("RAIN FTS: no transfer (rainftstx=1 to do it)\n");
++	}
 +	printf("RAIN FTS: stage 1 done\n");
 +}
 +

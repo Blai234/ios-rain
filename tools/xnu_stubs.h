@@ -33,6 +33,7 @@ int PE_parse_boot_argn(const char *arg, void *p, int size);
 void clock_interval_to_deadline(unsigned ms, unsigned long long scale, uint64_t *deadline);
 int assert_wait_deadline(int *chan, int state, uint64_t deadline);
 void thread_block(int state);
+void delay(int ms);
 int kernel_thread_start(void (*fn)(void *, wait_result_t), void *arg, thread_t *th);
 void thread_deallocate(thread_t th);
 
