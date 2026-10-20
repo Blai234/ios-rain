@@ -1,5 +1,66 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain display geometry: the canvas/framebuffer mismatch (2026-10-20, latest)
+
+The phone has never swapped a frame to the panel: `sweetfb_noconsole=1` is set,
+so the console still drawing means no AppleCLCD swap happened. The cause is
+now identified in the source.
+
+**Observed in the source.** `tools/mkadt.py` gave the Rain device tree the
+canvas of the physical panel (`720x1650`), while `SweetFramebuffer.cpp`
+(patch 0061) always presents the **iPhone X** size to the userland:
+`fLogicalW/fLogicalH = 1125x2436` whenever the panel is not larger than that,
+which is the case on Rain. `GetDisplaySize` therefore returned `1125x2436`
+while `IOMobileFramebuffer.framework` read `canvas-width/canvas-height =
+720x1650` from the `disp0` node.
+
+**Observed on the phone.** Every Rain boot logs
+`|backboardd| IOServiceMatchingFailed for: AppleM2ScalerCSCDriver`.
+
+**Evidence for the link.** The upstream topaz `tools/mkadt.py` documents the
+same failure mode: "sweetfb_native=1 with a 1125x2436 canvas makes backboardd
+ask for a hardware scaler that does not exist". A canvas that differs from
+the framebuffer's reported size is what makes backboardd look for a hardware
+scaler; `AppleM2ScalerCSCDriver` is that scaler, and it does not exist here.
+On sweet and topaz the canvas and the reported size are both `1125x2436`, so
+the lookup never happens and the GUI comes up.
+
+**This is a hypothesis about the stall, not a measured result**: the mismatch
+is real in the source, and the scaler lookup is real on the phone, but no Rain
+boot has been made with the canvas fixed yet.
+
+### Changes in this session
+
+- `tools/mkadt.py`: the canvas is now the size the kernel presents -
+  `1125x2436`, or the panel size only with `--native` / `sweetfb_native=1`.
+  Topaz is unchanged (it already used `1125x2436`).
+- `tools/validate_rain_payload.py`: rejects a payload whose canvas differs
+  from the size the kernel presents, so no boot image can be built with the
+  mismatch again.
+- `xnu/patches/0082-zrain-display-geometry.patch` (Rain only; the topaz build
+  skips `0082-zrain-*`):
+  - `SweetFbScale.h` (new): the scaling arithmetic, free of IOKit so the
+    host test can compile it.
+  - `SweetFramebuffer.cpp`: `sweetfb_scale=1` resamples the presented canvas
+    into the panel instead of showing its centre crop. Without it the panel
+    would show the middle `720x1650` of the `1125x2436` canvas, which hides
+    the status bar and the home indicator. Off by default: the crop path is
+    byte-for-byte the old one.
+  - `SweetHID.cpp`: the digitizer took its panel size from the sweet
+    constants (`1080x2400`) and clamped to `1079`/`2399`. It now reads the
+    panel size from the device tree, like the framebuffer does, and follows
+    the same crop-or-scale rule for the touch coordinates.
+- `tests/test_rain_fb_scale.py`: compiles the header from the patch with the
+  host compiler and checks the mapping (centre, full-canvas coverage, source
+  clipping, degenerate rectangles).
+- `tests/test_rain_adt.py`, `tests/test_rain_payload.py`: the canvas
+  invariant. 26 tests pass.
+
+**Not done yet.** The patch has not been compiled by CI and no image has been
+booted. The next action is a CI build of the `rain` series and a temporary
+`fastboot boot` of the resulting image, first without `sweetfb_scale=1` (the
+crop, to see whether the GUI appears at all) and then with it.
+
 ## Rain console A/B test (2026-10-20, latest)
 
 On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded

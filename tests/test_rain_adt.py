@@ -26,9 +26,30 @@ class RainTreeTest(unittest.TestCase):
         self.assertEqual(struct.unpack('<Q', prop(chosen, 'dram-size'))[0], 0x40000000)
         self.assertLessEqual(0xb0000000 + 0x40000000, 0xf0000000)
         self.assertEqual(struct.unpack('<III', prop(fb, 'width') + prop(fb, 'height') + prop(fb, 'stride')), (720, 1650, 2880))
-        self.assertEqual(struct.unpack('<II', prop(disp, 'canvas-width') + prop(disp, 'canvas-height')), (720, 1650))
         self.assertIn(b'xiaomi,rain\0', prop(root, 'compatible'))
         self.assertNotIn(b'sweet-ufs\0', [prop(n, 'name') for n in root.children])
+
+    def test_rain_canvas_is_the_size_the_kernel_presents(self):
+        # SweetFramebuffer reports 1125x2436 (the iPhone X) unless
+        # sweetfb_native=1. A canvas that differs from the reported size
+        # makes backboardd look for a hardware scaler: it then waits for
+        # the non-existent AppleM2ScalerCSCDriver and never swaps a frame.
+        root = mkadt.build(seed=b'0' * 64, rain=True)
+        disp = child(child(root, 'arm-io'), 'disp0')
+        self.assertEqual(struct.unpack('<II', prop(disp, 'canvas-width') + prop(disp, 'canvas-height')), (1125, 2436))
+
+    def test_rain_native_canvas_is_the_panel_size(self):
+        root = mkadt.build(seed=b'0' * 64, rain=True, native=True)
+        disp = child(child(root, 'arm-io'), 'disp0')
+        self.assertEqual(struct.unpack('<II', prop(disp, 'canvas-width') + prop(disp, 'canvas-height')), (720, 1650))
+
+    def test_topaz_canvas_is_unchanged(self):
+        root = mkadt.build(seed=b'0' * 64)
+        disp = child(child(root, 'arm-io'), 'disp0')
+        self.assertEqual(struct.unpack('<II', prop(disp, 'canvas-width') + prop(disp, 'canvas-height')), (1125, 2436))
+        native = mkadt.build(seed=b'0' * 64, native=True)
+        disp = child(child(native, 'arm-io'), 'disp0')
+        self.assertEqual(struct.unpack('<II', prop(disp, 'canvas-width') + prop(disp, 'canvas-height')), (1080, 2400))
 
     def test_topaz_defaults_are_preserved(self):
         root = mkadt.build(seed=b'0' * 64)

@@ -98,6 +98,18 @@ def validate(data, allow_readonly_ufs=False, allow_volatile_ufs=False):
             prop(fb, 'height') != struct.pack('<I', 1650) or
             prop(fb, 'stride') != struct.pack('<I', 2880)):
         raise ValueError('ADT framebuffer is not the observed Rain layout')
+    # The canvas the userland reads must be the size the kernel reports
+    # through GetDisplaySize, otherwise backboardd asks for a hardware
+    # scaler (AppleM2ScalerCSCDriver) that does not exist and never swaps
+    # a frame. SweetFramebuffer presents 1125x2436 unless sweetfb_native=1.
+    line = data[0x48:BASE_HEADER].split(b'\0', 1)[0].decode('ascii')
+    native = 'sweetfb_native=1' in line.split()
+    want = (720, 1650) if native else (1125, 2436)
+    arm_io = child(tree, 'arm-io')
+    disp = child(arm_io, 'disp0') if arm_io is not None else None
+    if disp is None or (prop(disp, 'canvas-width'), prop(disp, 'canvas-height')) != (
+            struct.pack('<I', want[0]), struct.pack('<I', want[1])):
+        raise ValueError('ADT canvas must match the size the kernel presents')
     return {'segments': nsegs, 'payload_bytes': len(data), 'kernel_bytes': kernel_bytes,
             'entry_pa': phys + entry - virt, 'adt_bytes': adt_size}
 

@@ -1,5 +1,28 @@
 # Redmi 10C (`rain`) port status — 2026-10-20
 
+## Display geometry fix: the canvas the userland reads — 2026-10-20
+
+The Rain device tree gave the userland a `720x1650` canvas, but the kernel
+presents the iPhone X size (`1125x2436`) to it. A canvas that differs from
+the size `IOMobileFramebuffer` reports makes backboardd look for a hardware
+scaler: on Rain it fails on `AppleM2ScalerCSCDriver` on every boot, and no
+frame is ever swapped to the panel. The upstream topaz tree documents the
+same effect ("a 1125x2436 canvas with `sweetfb_native=1` makes backboardd ask
+for a hardware scaler that does not exist").
+
+Fixed in this session:
+
+- `tools/mkadt.py` presents `1125x2436` (the panel size only with `--native`).
+  Topaz keeps its previous values.
+- `tools/validate_rain_payload.py` refuses a payload whose canvas differs from
+  the presented size.
+- `xnu/patches/0082-zrain-display-geometry.patch` (Rain only) adds
+  `sweetfb_scale=1`, which resamples the canvas into the `720x1650` panel
+  instead of showing its centre crop, and takes the digitizer's panel size
+  from the device tree instead of the sweet `1080x2400` constants.
+
+Not built and not booted yet: see `NOTES.md`.
+
 The verified Rain nullfilter image was temporarily booted on 2026-10-20:
 FASTBOOT product `rain`; send OKAY 0.472 s, boot OKAY 0.388 s. `IMG_0159.jpeg`
 shows its backboardd scaler message still flooding the console. A second
@@ -99,6 +122,11 @@ checked against GitHub's blob hashes. Rain's patch selection still ends at 0082.
 
 ## Source changes
 
+- `xnu/patches/0082-zrain-display-geometry.patch` (Rain only): the canvas
+  the userland reads matches the size the kernel presents, `sweetfb_scale=1`
+  resamples the canvas into the panel, and the digitizer takes its panel
+  size from the device tree. `tools/mkadt.py` and
+  `tools/validate_rain_payload.py` enforce the canvas invariant.
 - `tools/mkadt.py --rain` emits Rain identity, a 720×1650 framebuffer and
   canvas, the low RAM window, and no `sweet-ufs` node. It rejects `--highmem`.
 - `TARGET=rain shim/build.sh` selects Rain console dimensions, stock ARM64
@@ -310,12 +338,12 @@ Overlay contents disappear on reset.
 
 ## Remaining gates before XNU / iOS boot
 
-1. Reconcile hardcoded 1080×2400 framebuffer and touch values in inherited XNU
-   display and HID patches with Rain's 720×1650 panel. The early bootstrap
-   console patch now uses Rain geometry, but later `SweetHID` scaling and
-   userland display presentation remain inherited. The D22AP `/product`
-   device tree has been extracted from Apple's iPhone X 16.7.16 restore image
-   into ignored `research/ipsw-x/d22ap.adt`.
+1. **Build and boot the display geometry fix.** The canvas now matches the
+   size the kernel presents, and `sweetfb_scale=1` can resample the canvas
+   into Rain's `720x1650` panel. A temporary boot has to show whether the
+   GUI comes up, first without the argument (centre crop) and then with it.
+   The inherited XNU display and HID patches still carry sweet's geometry
+   elsewhere; the digitizer is now device-tree driven.
 2. Test the built volatile UFS overlay, then work through the next
    userland boot failure. Repeat the live memory preflight before future
    kernel placement changes.

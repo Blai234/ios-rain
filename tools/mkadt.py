@@ -192,11 +192,16 @@ def build(seed=None, qemu=False, highmem=False, native=False, rain=False):
             ph(),
             ('device_type', cstr('display-subsystem')),
             ('compatible', cstr('sweet,display')),
-            # --native: present the real 1080x2400 panel (needed for direct MDP scanout,
+            # --native: present the real panel size (needed for direct MDP scanout,
             # which must match the canvas: sweetfb_native=1 with a 1125x2436 canvas makes
-            # backboardd ask for a hardware scaler that does not exist)
-            ('canvas-width', u32(fb_w if native or rain else 1125)),
-            ('canvas-height', u32(fb_h if native or rain else 2436)),
+            # backboardd ask for a hardware scaler that does not exist).
+            # The canvas must always be the size SweetFramebuffer reports to the
+            # userland (1125x2436, the iPhone X, unless --native): when the two
+            # disagree, backboardd concludes it needs a hardware scaler, looks
+            # up the non-existent AppleM2ScalerCSCDriver and never finishes
+            # setting up the display, so no frame is ever swapped to the panel.
+            ('canvas-width', u32(fb_w if native else 1125)),
+            ('canvas-height', u32(fb_h if native else 2436)),
         ])])
 
     fbcon = node('sweet-fbcon', [

@@ -11,8 +11,14 @@ import mkadt  # noqa: E402
 import validate_rain_payload as check  # noqa: E402
 
 
-def payload(rain=True, readonly_ufs=False, cmdline=''):
+def payload(rain=True, readonly_ufs=False, cmdline='', canvas=None):
     tree = mkadt.build(seed=b'0' * 64, rain=rain)
+    if canvas is not None:
+        disp = child(child(tree, 'arm-io'), 'disp0')
+        disp.props = [(k, f, v) for k, f, v in disp.props
+                      if k not in ('canvas-width', 'canvas-height')]
+        disp.props.append(('canvas-width', 0, mkadt.u32(canvas[0])))
+        disp.props.append(('canvas-height', 0, mkadt.u32(canvas[1])))
     if readonly_ufs:
         tree.children.append(mkadt.node('sweet-ufs', [
             ('compatible', mkadt.cstr('qcom,ufshc')),
@@ -32,6 +38,11 @@ def payload(rain=True, readonly_ufs=False, cmdline=''):
     data[adt_off:adt_off + len(device_tree)] = device_tree
     data.extend(bytes((-len(data)) & 7))
     return data
+
+
+def child(parent, name):
+    return next(n for n in parent.children
+                if dict((k, v) for k, _, v in n.props)['name'] == name.encode() + b'\0')
 
 
 class RainPayloadTest(unittest.TestCase):
@@ -78,6 +89,16 @@ class RainPayloadTest(unittest.TestCase):
             with self.subTest(line=line), self.assertRaises(ValueError):
                 check.validate(payload(readonly_ufs=True, cmdline=line),
                                allow_volatile_ufs=True)
+
+    def test_rejects_a_canvas_the_kernel_does_not_present(self):
+        # A canvas that differs from the size SweetFramebuffer reports makes
+        # backboardd look for the non-existent AppleM2ScalerCSCDriver.
+        check.validate(payload())
+        with self.assertRaisesRegex(ValueError, 'canvas'):
+            check.validate(payload(canvas=(720, 1650)))
+
+    def test_accepts_the_native_canvas_with_the_native_boot_argument(self):
+        check.validate(payload(cmdline='sweetfb_native=1', canvas=(720, 1650)))
 
 
 if __name__ == '__main__':
