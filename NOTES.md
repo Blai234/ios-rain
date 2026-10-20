@@ -148,6 +148,76 @@ happening.
 The userland reached the logo, so the display path is proven; the
 question now is what the userland is waiting for after the logo.
 
+### The console log: no scaler lookup, and the userland still booting
+
+Four photos of the console boot (`IMG_0162.jpeg` to `IMG_0165.jpeg`) show
+the userland advancing through the launchd job list: `chronomd`,
+`xpcproxy`, `liveactivitiesd`, `thermalmonitord`, `securitd`,
+`syncdefaultsd`, `tccd`, `CommCenterMobileHelper`, `Sandbox`,
+`CHReportingService`, `mDNSResponder`, `fairplayd.H2`, `carkitd`,
+`rapport`. The `SMP` sampler shows **SpringBoard and backboardd alive**
+with several threads each, mostly blocked at the same few PCs.
+
+**The `AppleM2ScalerCSCDriver` line is gone.** It is not in any of the four
+photos, and the null filter (`rainquietscaler=1`) was deliberately not
+passed. The canvas fix removed the scaler lookup.
+
+Two other findings from the log: the Apple logo is visible under the
+console text, and the kernel has **no** boot-logo code (no "logo" strings
+in the kernel, no such code in the patch series), so the userland drew it
+and the display path works end to end.
+
+The boot does not look like a loop: every photo shows different daemons
+starting. `securitd` retries the keybag in a loop and gets
+`0xe00002c7` (kIOReturnNotAvailable) from the stub AppleKeyStore, which
+is the expected development behaviour.
+
+### The real constraint: XNU only manages 1 GiB on Rain
+
+`osfmk/arm64/arm_vm_init.c` sets `gPhysBase = args->physBase` and
+`real_phys_size = args->memSize`, and `gPhysSize = mem_size =
+(gPhysBase + args->memSize) - gPhysBase`. **The VM manages exactly the
+window the boot arguments declare, and nothing else.** Sweet declares
+3.95 GiB, topaz 4 GiB; Rain declared 1 GiB.
+
+That 1 GiB also has to hold the kernel image, the zone map, the page
+tables and the volatile UFS overlay, which is allowed to grow to 512 MiB
+(`COW_MAX_BLOCKS` in `0082-zrain-ufs-cow.patch`). The iOS 16 userland was
+therefore starting with at most a few hundred MiB, which is the most
+plausible reason the boot never reaches the lock screen.
+
+The window is host-side only (the ADT and the shim), so no kernel rebuild
+is needed:
+
+- `tools/mkadt.py`: the Rain window is now `0x83000000 + 0x6d000000`
+  (1744 MiB, ending at the same `0xf0000000` as before, so the 60 MiB
+  headroom below Android's `0xf3c00000-0xffbfffff` reservation is kept).
+  The base has to clear the shim Image and the payload it carries, which
+  are still in RAM at `0x80080000-0x82220000` while the kernel is copied
+  there.
+- `shim/loader.c`: the exact-window check became a safety envelope: the
+  window must start above the shim Image (`image_end`, checked at run
+  time) and end at or below `0xf0000000`.
+- `tools/validate_rain_payload.py` and `tools/check_rain_memory.py`: the
+  new window, and the preflight now takes `--base`/`--size` and falls
+  back to a plain `cat /proc/iomem` when the device has no `su`.
+
+**Not done yet.** The new window has to be checked against a live
+`/proc/iomem` before it is booted: the region `0x83000000-0xb0000000` was
+never managed by XNU, so it may hold an Android reservation. That needs
+the phone in Android (or OrangeFox recovery), which is the next step.
+
+The three images for the new window are built in `xnu/out-rain-ci/bigram/`
+(same kernel, new ADT and shim).
+
+**Next.** 1. Read `/proc/iomem` on the phone and run the preflight for
+`0x83000000+0x6d000000`. 2. If it passes, boot
+`xnu/out-rain-ci/bigram/rain-display-crop-shim/shim-boot.img`. 3. If the
+userland still does not reach the lock screen with 1744 MiB, the next
+lever is the CPU count: `cpus=4` (the four Gold cores) is four times
+faster, but the four-CPU boots corrupted the HFS catalog, so that has to
+be understood first.
+
 ## Rain console A/B test (2026-10-20, latest)
 
 On resuming work, the earlier 32-bit iOS 7 diagnostic tree had been superseded

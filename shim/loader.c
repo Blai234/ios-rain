@@ -17,6 +17,8 @@
 #define MAX_IMAGE_SIZE		0x8000000UL
 #define MAX_PAYLOAD_SEGS	64U
 #define MAX_ADT_SIZE		0x100000UL
+/* Rain: the top of the kernel-managed RAM (see tools/mkadt.py). */
+#define RAIN_WINDOW_MAX_END	0xf0000000ULL
 
 struct payload_seg {
 	uint64_t vmaddr, vmsize, file_off, file_size;
@@ -97,10 +99,6 @@ static const char *validate_payload(const struct payload *p, uint64_t available)
 	    p->entry_va < p->virt_base || p->entry_va >= p->kernel_end ||
 	    p->mem_size < 2 * PAGE_16K)
 		return "bad kernel range";
-#ifdef RAIN
-	if (p->phys_base != 0xb0000000ULL || p->mem_size != 0x40000000ULL)
-		return "wrong Rain RAM window";
-#endif
 	uint64_t kernel_off = p->kernel_end - p->virt_base;
 	if (kernel_off >= p->mem_size ||
 	    p->adt_size + 2 * PAGE_16K > p->mem_size - kernel_off)
@@ -185,6 +183,20 @@ const char *loader_boot(uintptr_t dtb)
 	const char *invalid = validate_payload(p, rd_end - rd_start);
 	if (invalid)
 		return invalid;
+
+#ifdef RAIN
+	/*
+	 * The RAM window is chosen by the host tools (tools/mkadt.py). The
+	 * kernel is copied to phys_base while this Image and the payload it
+	 * carries are still in RAM, so the window has to start above them. It
+	 * must also stay below the region Android reserves at the top of the
+	 * upper bank (0xf3c00000-0xffbfffff in the live /proc/iomem); the
+	 * tools keep 60 MiB of headroom below that.
+	 */
+	if (p->phys_base < image_end || p->mem_size < 0x40000000ULL ||
+	    p->phys_base + p->mem_size > RAIN_WINDOW_MAX_END)
+		return "wrong Rain RAM window";
+#endif
 
 	uint64_t pa_of_va_base = p->phys_base - p->virt_base;	/* pa = va + this */
 	con_hex2("PHYS", "base=", p->phys_base, "size=", p->mem_size);

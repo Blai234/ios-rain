@@ -14,8 +14,13 @@ BASE_HEADER = 0x2a8
 SEG_SIZE = 32
 MAX_SEGS = 64
 MAX_ADT = 0x100000
-PHYS_BASE = 0xb0000000
-MEM_SIZE = 0x40000000
+# The kernel-managed RAM window (tools/mkadt.py). XNU manages exactly this
+# much: the userland gets no more.
+PHYS_BASE = 0x83000000
+MEM_SIZE = 0x6d000000
+# The window must stay below Android's reservation at the top of the upper
+# bank, and the shim checks the same bound (shim/loader.c).
+WINDOW_MAX_END = 0xf0000000
 
 
 def prop(node, name):
@@ -42,6 +47,8 @@ def validate(data, allow_readonly_ufs=False, allow_volatile_ufs=False):
     virt, entry, adt_off, adt_size, kernel_end, phys, mem = struct.unpack_from('<7Q', data, 0x10)
     if (phys, mem) != (PHYS_BASE, MEM_SIZE):
         raise ValueError('payload selects the wrong Rain RAM window')
+    if phys + mem > WINDOW_MAX_END:
+        raise ValueError('Rain RAM window reaches into the reserved region')
     if virt == 0 or kernel_end <= virt or not virt <= entry < kernel_end:
         raise ValueError('invalid kernel virtual range')
     kernel_bytes = kernel_end - virt
