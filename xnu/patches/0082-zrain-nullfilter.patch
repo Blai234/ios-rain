@@ -1,0 +1,27 @@
+--- a/bsd/dev/mem.c
++++ b/bsd/dev/mem.c
+@@ -258,12 +258,22 @@
+ 			{
+ 				char name[32];
+ 				if (sweet_null_tee(name, sizeof(name))) {
+-					char buf[256];
+-					c = MIN(uio_curriovlen(uio), sizeof(buf));
++					char buf[257];
++					c = MIN(uio_curriovlen(uio), sizeof(buf) - 1);
+ 					error = uiomove(buf, (int)c, uio);
+ 					if (error) {
+ 						break;
+ 					}
++					buf[c] = '\0';
++					/* Rain diagnostic: preserve other backboardd output. */
++					if (strcmp(name, "backboardd") == 0 &&
++					    strstr(buf, "IOServiceMatchingFailed for: AppleM2ScalerCSCDriver") != NULL) {
++						int quiet = 0;
++						PE_parse_boot_argn("rainquietscaler", &quiet, sizeof(quiet));
++						if (quiet == 1) {
++							continue;
++						}
++					}
+ 					printf("|%s| %.*s%s", name, (int)c, buf,
+ 					    (c > 0 && buf[c - 1] == '\n') ? "" : "\n");
+ 					continue;

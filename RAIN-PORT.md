@@ -2,6 +2,23 @@
 
 ## Latest stall and controlled migration test — 2026-10-20
 
+The gated migration kernel built successfully in macOS Actions run
+`39378328083` at `cab7a2e`. Its artifact and internal kernel SHA-256 were
+verified. The resulting boot-v3 image passed volatile-UFS preflight and
+round-trip packaging, and the connected product reported `rain` before a
+temporary `fastboot boot`. Its boot command line adds `rainseedmigration=1`
+to the previous 512 MiB COW/one-CPU configuration; no physical write flag is
+present. In `IMG_0156.jpeg`, mediaserverd creates a surface while further
+services start. In `IMG_0157.jpeg`, COW reports 64 MiB allocated and more
+services start. The user says text is still scrolling. No graphical handoff
+has been observed, and the one-time seed result is not visible in these
+photos. Keep observing this boot before drawing a conclusion.
+`IMG_0158.jpeg` later shows 128 MiB COW allocated and live sampler stacks for
+SpringBoard and backboardd, with no swap. A Rain-only gated console filter,
+`0082-zrain-nullfilter.patch`, is prepared for a later diagnostic boot if
+needed; it silences only the known repeated scaler lookup line from
+backboardd while preserving other output. It has not yet been built or booted.
+
 The 512 MiB volatile overlay boot passed the earlier 64 MiB limit.
 `IMG_0154.jpeg` shows 192 MiB allocated and additional daemons starting.
 `IMG_0155.jpeg` shows service startup continuing, then a static console for

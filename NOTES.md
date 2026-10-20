@@ -2,6 +2,36 @@
 
 ## Rain migration seed experiment (2026-10-20, latest)
 
+Commit `cab7a2e` passed macOS Actions build `39378328083`. The kernel artifact
+ZIP SHA-256 is `57e219011a6e3dc5a4fa54501d48cddf2190d5a9a61b5822df191f1dbe70230d`;
+the extracted kernel matches its internal SHA-256
+`8d5fa1198d402832854c87522ef8472bf7a76c31d28a0e31d200492f80503658`.
+The temporary image at
+`xnu/out-rain-ci/rain-migration-seed-shim/shim-boot.img` has SHA-256
+`be141e280db8ab64b13fa7aa1cdd6a01aa8f3e9ae113ee2ab20ee2ffefe555c3`.
+Its payload passed the volatile-UFS preflight, contains the 512 MiB COW and
+the seed diagnostic, and has `rainseedmigration=1 ufscow=1 rootrw=1` without
+`ufsrw`. The boot-v3 packager round-tripped the stock ramdisk. `fastboot boot`
+accepted it on verified product `rain` (send 0.466 s, boot 0.344 s); no
+partition flash was issued.
+
+`IMG_0156.jpeg` shows continued daemon starts, a mediaserverd 1024x768
+IOSurface allocation, and backboardd sampler stacks. `IMG_0157.jpeg` shows
+`SMP --- sample 6`, `SWEET UFS COW: 64 MiB allocated`, further daemon starts,
+and no visible panic, COW limit, or graphical swap. The user reports the
+console is still adding lines. The one-time `RAIN migration seed:` result
+scrolled off screen before a photo, so this does not prove whether the file
+was created or whether it changed migration behavior. Leave the active boot
+running while it progresses and observe for first swap or a stable failure.
+`IMG_0158.jpeg` then shows 128 MiB COW allocated and both SpringBoard and
+backboardd alive in sampler output, still no swap. Prepared Rain-only
+`0082-zrain-nullfilter.patch` for a possible later diagnostic boot: with
+`rainquietscaler=1`, it suppresses only backboardd's repeated
+`IOServiceMatchingFailed for: AppleM2ScalerCSCDriver` `/dev/null` echo and
+preserves its other messages. It does nothing without that argument. The
+patch applies to the prior successful buildtree and is copied unchanged by
+the Rain patch rewriter; it has not yet been built or run on the phone.
+
 The 512 MiB COW / one-CPU temporary boot ran beyond the old capacity stop.
 `IMG_0154.jpeg` shows `SWEET UFS COW: 192 MiB allocated`, a live SpringBoard
 sampler, and more launched daemons without a panic or 512 MiB limit. The later
