@@ -39,8 +39,20 @@ CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogres
 # userland is stuck.
 CONSOLE_CMDLINE = CMDLINE.replace(' sweetfb_noconsole=1', '')
 
+# cpus=4 starts the four Gold cores. The shim already prepares their GIC
+# redistributors (gold_gicr_prepare enables the timers and SGI1 for each),
+# and the 0x100-style affinity in the device tree works on Rain because the
+# GIC's Aff2/Aff3 SGI filters are "any". The four-CPU boots so far
+# corrupted the HFS catalog, most likely because the volatile overlay
+# filled up: it stores whole 4 KiB blocks while HFS writes 512-byte
+# sectors, so it fills eight times too fast and a refused write in the
+# middle of a catalog update leaves the catalog inconsistent.
+CPUS4_CMDLINE = CMDLINE.replace('cpus=1', 'cpus=4')
+CPUS4_CONSOLE_CMDLINE = CONSOLE_CMDLINE.replace('cpus=1', 'cpus=4')
+
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
-            ('console', CONSOLE_CMDLINE))
+            ('console', CONSOLE_CMDLINE), ('cpus4', CPUS4_CMDLINE),
+            ('cpus4console', CPUS4_CONSOLE_CMDLINE))
 
 
 def sha256(data):

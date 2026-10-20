@@ -304,8 +304,51 @@ console variants). Not booted yet.
 Note for the next agent: the shim Image on Rain is loaded at
 `0x40080000` (not `0x80080000` as on sweet), and the payload it carries
 ends at `0x42220000`. The screen font renders `8` like `B`, so the shim's
-`base=83000000` and `JUMP 844a6488` read as `B3000000` and `B44AB648` in
+`base=80000000` and `JUMP 844a6488` read as `B0000000` and `B44AB648` in
 a photo.
+
+### cpus=4 is viable again: the GIC was never the problem — 2026-10-20
+
+`cpus=4` was abandoned after the four-CPU boots corrupted the HFS
+catalog, but the CPU start path is sound:
+
+- The shim's `gold_gicr_prepare()` already prepares the redistributors of
+  the three secondary Gold cores: it wakes each one (GICR_WAKER), sets
+  GICR_IGROUPR0, the priorities and **enables the timers and SGI1** in
+  GICR_ISENABLER0. The shim screen shows it: `GICR+ aff=00000101
+  en=000C0002` for 0x101, 0x102 and 0x103. Its comment names the exact
+  symptom it avoids: "without it a thread whose wakeup timer is armed on
+  a secondary never wakes (backboardd stuck in usleep())".
+- Rain's real MPIDRs are `8000000n` and `8000010n` (Qualcomm puts the
+  cluster in Aff3), but the device tree keeps topaz's `0x100|n`
+  encoding and that still works: Qualcomm's PSCI accepts it for CPU_ON,
+  and the GIC's SGI Aff2/Aff3 filters are "any", so only Aff0/Aff1 have
+  to match.
+
+So the four-CPU failure is not the CPU start. The best explanation left
+is the **volatile overlay**: `0082-zrain-ufs-cow.patch` stores whole
+4 KiB blocks (`COW_MAX_BLOCKS 131072`, 512 MiB), while HFS writes
+512-byte sectors, so the overlay fills eight times too fast. A write
+refused at the limit in the middle of a catalog update leaves the
+catalog inconsistent, which is exactly "HFS B-tree offset #0 invalid
+(0x0000) ... followed by hfs_mark_inconsistent". The one-CPU boot hit
+the same 64 MiB limit (IMG_0152) but wrote far less per unit of time.
+
+The overlay is now a smaller share of a 1792 MiB window, and `cpus=4` is
+built as a boot variant, so it can be tested without a kernel rebuild:
+
+| Variant | Image SHA-256 | Command line |
+| --- | --- | --- |
+| `rain-display-crop-aligned` | `ebb23068…` | `cpus=1`, console muted |
+| `rain-display-scaled-aligned` | `ec2e0305…` | `cpus=1`, `sweetfb_scale=1` |
+| `rain-display-console-aligned` | `4ef25f44…` | `cpus=1`, console alive |
+| `rain-display-cpus4-aligned` | `72bfd3cb…` | `cpus=4`, console muted |
+| `rain-display-cpus4console-aligned` | `7c872b15…` | `cpus=4`, console alive |
+
+If `cpus=4` still corrupts the catalog, the fix is a sector-granular
+overlay (store the changed 512-byte sector instead of the whole block),
+which would also make the 512 MiB cap eight times more effective. That
+is a change to `0082-zrain-ufs-cow.patch` and needs a CI build.
 
 ## Rain console A/B test (2026-10-20, latest)
 
