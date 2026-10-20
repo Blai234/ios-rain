@@ -35,9 +35,19 @@ Build step; the public job page exposed only exit code 2 and the log connector
 did not return the text. The candidate used `strstr`, which is not found in
 the exported XNU kernel headers or local source; changed it to the kernel's
 used `strnstr` and added a seven-day build-log artifact to the workflow so a
-repeat failure is diagnosable. This revision has not yet been built or run on
-the phone. The phone ran out of battery during the seed diagnostic; charge it
-before any next live test. Its RAM overlay was temporary.
+repeat failure is diagnosable. Corrected macOS Actions run `39383209117`
+passed. Its kernel ZIP SHA-256 is
+`50591760b36983f39491de7bf2b5b4a7374bfd43a068801972535b8d2ebcbc33`;
+its internal kernel SHA-256 is
+`fad4a40ef56778e4f1603336629d1540d0c99803eb64affc14191f5b356dc706`.
+The offline temporary image
+`xnu/out-rain-ci/rain-nullfilter-shim/shim-boot.img` has SHA-256
+`5fde220c16836b7797daff18931a8d4f3f41f0d57892e4d454fb666220ba59ce`.
+Volatile-UFS preflight and boot-v3 round trip passed. Its command line keeps
+the seed and 512 MiB COW experiment, enables `sweetnull=backboardd,SpringBoard`
+and `rainquietscaler=1`, and omits `ufsrw`. This image has **not** been booted.
+The phone ran out of battery during the seed diagnostic; charge it before any
+next live test. Its RAM overlay was temporary.
 
 The 512 MiB COW / one-CPU temporary boot ran beyond the old capacity stop.
 `IMG_0154.jpeg` shows `SWEET UFS COW: 192 MiB allocated`, a live SpringBoard

@@ -20,9 +20,13 @@ needed; it silences only the known repeated scaler lookup line from
 backboardd while preserving other output. Its first CI attempt
 (`39381949629`) failed in Build; the kernel artifact was absent and the job
 log endpoint failed, so `strstr` was replaced with the kernel's `strnstr` and
-the workflow now uploads a build-log artifact. The revised filter has not
-yet been built or booted. The phone ran out of battery during the seed test;
-its volatile overlay disappeared on power loss.
+the workflow now uploads a build-log artifact. The corrected build passed in
+Actions run `39383209117`. The verified temporary image at
+`xnu/out-rain-ci/rain-nullfilter-shim/shim-boot.img` has SHA-256
+`5fde220c16836b7797daff18931a8d4f3f41f0d57892e4d454fb666220ba59ce`;
+it passed volatile-UFS preflight and boot-v3 round trip. It has **not** been
+booted. The phone ran out of battery during the seed test; its volatile
+overlay disappeared on power loss.
 
 The 512 MiB volatile overlay boot passed the earlier 64 MiB limit.
 `IMG_0154.jpeg` shows 192 MiB allocated and additional daemons starting.
