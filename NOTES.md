@@ -34,6 +34,11 @@ SMMU (suspected: the hypervisor rejects the S1-bypass bank) or the SPI cycle.
 `rainftsstop=4` (variant touch-rx, stage `stop-rx`) queues one RX DMA TRE,
 rings only the RX doorbell (a memory fetch, no SPI clock), then prints
 `fault gfsr= fsr= far= ch1rp= ch1=` (sGFSR 0x48, CB FSR 0x58, FAR 0x60).
+CI run 39655490103 built commit 19b862e; kernel SHA-256
+`148d885cbb436b5bf9284cf482d2a50f8c4c242803d2d95e8fa79d8dd1604d7d`;
+`xnu/out-rain-ci/fts17/rain-display-touch-rx-shim/shim-boot.img` SHA-256
+`0225e2627dbc5729d24b9703cb59f057c8d01ee7b462af352ba9db5837064c29`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
