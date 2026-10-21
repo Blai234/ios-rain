@@ -60,6 +60,12 @@ reproducible. Next: rerun the full touch-id probe with an `xsnap` line
 (ch0 WP, ch1 RP/WP, EV RP/WP from CNTXT_4/6, SE GENI_STATUS, M_IRQ_STATUS,
 IOS) to see whether the doorbells reach the context WP and whether the SE
 ever saw a GO.
+CI run 39658790515 built commit 64b191a; kernel SHA-256
+`22be303d1deacbcb0dafb1361e538f93972cbc6323e73f744065e24ecf4ea72d`.
+`xnu/out-rain-ci/fts19/rain-display-touch-id-shim/shim-boot.img` SHA-256
+`f8ae84f71f1d51a368229ae0d2fdbf12c85d5baef731f02b362bc5af54828d0c`;
+touch-cfg `8fabc3e39715c3a0deb61d4511dd08d63d3b860596751329a4ebbf3539daa272`.
+Device test pending (touch-id first).
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
