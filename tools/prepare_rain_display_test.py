@@ -71,6 +71,8 @@ TOUCH_GPI_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=2'
 TOUCH_SE_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=3'
 TOUCH_RX_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=4'
 TOUCH_CFG_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=5'
+# rainftsnoirq=1 leaves the GPII interrupts masked (the driver polls).
+TOUCH_NOIRQ_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsnoirq=1'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -84,6 +86,7 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-se', TOUCH_SE_CMDLINE),
             ('touch-rx', TOUCH_RX_CMDLINE),
             ('touch-cfg', TOUCH_CFG_CMDLINE),
+            ('touch-noirq', TOUCH_NOIRQ_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 

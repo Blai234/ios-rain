@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1596 @@
+@@ -0,0 +1,1606 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -317,6 +317,7 @@ index 0000000..db48221
 +	uint64_t dma_pa;
 +	unsigned wp[2], ev_rp, ev_wp;
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
++	bool noirq;                   /* rainftsnoirq: GPII interrupts left masked */
 +	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
 +	                               * 4 after one RX TRE fetch (no SPI clock),
 +	                               * 5 after one TX CONFIG0 TRE with an EOT event */
@@ -872,13 +873,21 @@ index 0000000..db48221
 +		return false;
 +	}
 +
-+	/* gpi_config_interrupts(DEFAULT_IRQ_SETTINGS). */
-+	gpi_rmw(GPI_TYPE_IRQ_MSK, 0x7fu, 0x4fu);
-+	gpi_rmw(GPI_IEOB_MSK, 1u, 1u);
-+	gpi_rmw(GPI_SRC_CH_MSK, 3u, 3u);
-+	gpi_rmw(GPI_SRC_EV_MSK, 1u, 1u);
-+	gpi_rmw(GPI_GLOB_EN, 0xfu, 0xfu);
-+	gpi_rmw(GPI_GPII_EN, 0xfu, 0xfu);
++	/*
++	 * gpi_config_interrupts(DEFAULT_IRQ_SETTINGS), unless rainftsnoirq=1:
++	 * this driver polls the event ring and installs no handler, so the
++	 * GPII line can stay masked. The event ring is written either way.
++	 */
++	int noirq = 0;
++	PE_parse_boot_argn("rainftsnoirq", &noirq, sizeof(noirq));
++	st.noirq = noirq != 0;
++	uint32_t on = st.noirq ? 0 : ~0u;
++	gpi_rmw(GPI_TYPE_IRQ_MSK, 0x7fu, 0x4fu & on);
++	gpi_rmw(GPI_IEOB_MSK, 1u, 1u & on);
++	gpi_rmw(GPI_SRC_CH_MSK, 3u, 3u & on);
++	gpi_rmw(GPI_SRC_EV_MSK, 1u, 1u & on);
++	gpi_rmw(GPI_GLOB_EN, 0xfu, 0xfu & on);
++	gpi_rmw(GPI_GPII_EN, 0xfu, 0xfu & on);
 +	gpi_wr(GPI_MSI_LSB, 0);
 +	gpi_wr(GPI_MSI_MSB, 0);
 +	gpi_wr(GPI_SCRATCH0, 0);
@@ -1409,6 +1418,7 @@ index 0000000..db48221
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
 +		    st.ev_last[0], st.ev_last[1]);
++		printf("RAIN FTS: %s noirq=%d\n", stage, st.noirq);
 +		printf("RAIN FTS: %s xsnap wp0=%#x rp1=%#x wp1=%#x evrp=%#x evwp=%#x se=%#x mirq=%#x ios=%#x\n",
 +		    stage, st.xsnap[0], st.xsnap[1], st.xsnap[2], st.xsnap[3],
 +		    st.xsnap[4], st.xsnap[5], st.xsnap[6], st.xsnap[7]);

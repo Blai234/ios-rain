@@ -65,7 +65,12 @@ CI run 39658790515 built commit 64b191a; kernel SHA-256
 `xnu/out-rain-ci/fts19/rain-display-touch-id-shim/shim-boot.img` SHA-256
 `f8ae84f71f1d51a368229ae0d2fdbf12c85d5baef731f02b362bc5af54828d0c`;
 touch-cfg `8fabc3e39715c3a0deb61d4511dd08d63d3b860596751329a4ebbf3539daa272`.
-Device test pending (touch-id first).
+fts19 touch-id **reset again** during the console text (2 of 2 full
+probes), so the full transfer reliably resets, while lone RX / CONFIG0 TREs
+(never consumed) do not. Suspects: (1) the GPII interrupt, enabled like
+Linux but with no handler in this kernel; (2) the GPI's DMA writes (RX data,
+event). `rainftsnoirq=1` (variant touch-noirq) leaves all GPII interrupt
+enables masked; the driver polls the event ring anyway.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
