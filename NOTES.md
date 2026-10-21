@@ -23,6 +23,11 @@ ev=0x10110002 rp=0x83b0c000 err=0`: both channels started, event ring
 allocated, no error. The reset is after channel start: pin mux (already
 done without a reset in fts8), GSI-mode SE setup, or the first GPI DMA.
 `rainftsstop=3` (stage `stop-se`, variant touch-se) stops after the SE setup.
+CI run 39653784867 built commit b562bf4; kernel SHA-256
+`c92f1efa70a73cebb5968d4cdda5eb09db15693544713262b7404fee06aa6a91`;
+`xnu/out-rain-ci/fts16/rain-display-touch-se-shim/shim-boot.img` SHA-256
+`4e768666d2ca74d2ca75f46e4cc1b4c639beddc742be6c5913bc62d32d926226`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
