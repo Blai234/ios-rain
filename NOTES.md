@@ -75,7 +75,13 @@ CI run 39660112799 built commit a040e2c; kernel SHA-256
 `21f4ef8ebb4030901040f0238f534bb8d08b6d43e2c4bcd49526e6ea9082fdfa`.
 `xnu/out-rain-ci/fts20/rain-display-touch-noirq-shim/shim-boot.img` SHA-256
 `f621f59742bc106b4c32be131b85440bb91502f50a34970a751aa6a6e33cf697`.
-Device test pending.
+touch-noirq **reset** too (3 of 3 full probes): the GPII interrupt is not
+the cause. The TREs match upstream gpi_create_spi_tre/spi-geni field for
+field, and the DMA page (0x83b0c000) is outside every fixed carveout in
+the stock reserved-memory (all below 0x62300000). `rainftsstop=6`
+(variant touch-tx, with noirq) sends CONFIG0 + GO(TX) + DMA of the 4-byte
+id header with no IEOT and no RX TRE: GPI reads and SPI clock only, no
+GPI memory writes.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 

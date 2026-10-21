@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1606 @@
+@@ -0,0 +1,1643 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -258,6 +258,7 @@ index 0000000..db48221
 +#define TRE_LINK         (1u << 11)
 +#define TRE_C0_TX_PACK   (1u << 24)
 +#define TRE_C0_RX_PACK   (1u << 25)
++#define SPI_GO_TX        1u
 +#define SPI_GO_DUPLEX    3u
 +#define EV_XFER_COMPLETE 0x22u
 +#define EV_CODE_EOT      2u
@@ -320,7 +321,8 @@ index 0000000..db48221
 +	bool noirq;                   /* rainftsnoirq: GPII interrupts left masked */
 +	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
 +	                               * 4 after one RX TRE fetch (no SPI clock),
-+	                               * 5 after one TX CONFIG0 TRE with an EOT event */
++	                               * 5 after one TX CONFIG0 TRE with an EOT event,
++	                               * 6 after a TX-only SPI write with no event */
 +	uint32_t flt[6];              /* sGFSR, CB FSR, CB FAR lo/hi, ch1 RP, ch1 config */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
@@ -1050,6 +1052,7 @@ index 0000000..db48221
 + * SMMU global and context-bank fault registers.
 + */
 +static void gpi_read_faults(void);
++static void gpi_txonly_probe(void);
 +
 +static void
 +gpi_rx_fetch_probe(void)
@@ -1064,6 +1067,35 @@ index 0000000..db48221
 +	fts_sleep(500);
 +	gpi_read_faults();
 +	printf("RAIN FTS: RX fetch survived gfsr=%#x fsr=%#x\n", st.flt[0], st.flt[1]);
++}
++
++/*
++ * rainftsstop=6: a TX-only SPI write (CONFIG0, GO TX, DMA) with no IEOT and
++ * no RX TRE. The GPI reads the TREs and the four header bytes and clocks
++ * them out, but writes nothing to memory: no RX data, no event. Whether
++ * it ran shows in the TX channel RP (xsnap/gsnap) and the SE status.
++ */
++static void
++gpi_txonly_probe(void)
++{
++	uint8_t *txb = (uint8_t *)(st.dma + GPI_TX_BUF);
++	static const uint8_t hdr[4] = { FTS_CHIP_ID_REG, FTS_READ_CMD, 0, 2 };
++
++	memcpy(txb, hdr, sizeof(hdr));
++	gpi_put(0, 8u - 4u /* word length */ | TRE_C0_TX_PACK | TRE_C0_RX_PACK, 0,
++	    4u /* clk_div */, TRE_TYPE(TRE_CONFIG0) | TRE_CHAIN);
++	gpi_put(0, SPI_GO_TX | (0u << 8) /* cs */, 0, 0,
++	    TRE_TYPE(TRE_GO) | TRE_CHAIN);
++	gpi_put(0, (uint32_t)(st.dma_pa + GPI_TX_BUF), (uint32_t)((st.dma_pa + GPI_TX_BUF) >> 32),
++	    sizeof(hdr), TRE_TYPE(TRE_DMA));
++	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
++	__asm__ volatile("dsb sy" ::: "memory");
++	printf("RAIN FTS: ringing the TX doorbell for a TX-only write\n");
++	fts_sleep(100);
++	gpi_wr(GPI_CH_DB(0), (uint32_t)(st.dma_pa + GPI_TX_RING + st.wp[0] * GPI_EL_SIZE));
++	fts_sleep(500);
++	gpi_read_faults();
++	printf("RAIN FTS: TX-only survived rp0=%#x se=%#x\n", st.gsnap[3], st.xsnap[5]);
 +}
 +
 +/* The SMMU fault registers and the RX channel after a probe. */
@@ -1560,6 +1592,11 @@ index 0000000..db48221
 +	if (st.stop == 5 && st.gsi) {
 +		gpi_cfg_probe();
 +		fts_repeat("stop-cfg");
++		return;
++	}
++	if (st.stop == 6 && st.gsi) {
++		gpi_txonly_probe();
++		fts_repeat("stop-tx");
 +		return;
 +	}
 +	fts_probe_id();

@@ -73,6 +73,8 @@ TOUCH_RX_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=4'
 TOUCH_CFG_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=5'
 # rainftsnoirq=1 leaves the GPII interrupts masked (the driver polls).
 TOUCH_NOIRQ_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsnoirq=1'
+# rainftsstop=6: a TX-only SPI write with no event, so the GPI writes nothing.
+TOUCH_TX_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsnoirq=1 rainftsstop=6'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -87,6 +89,7 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-rx', TOUCH_RX_CMDLINE),
             ('touch-cfg', TOUCH_CFG_CMDLINE),
             ('touch-noirq', TOUCH_NOIRQ_CMDLINE),
+            ('touch-tx', TOUCH_TX_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 
