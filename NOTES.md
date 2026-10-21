@@ -82,6 +82,11 @@ the stock reserved-memory (all below 0x62300000). `rainftsstop=6`
 (variant touch-tx, with noirq) sends CONFIG0 + GO(TX) + DMA of the 4-byte
 id header with no IEOT and no RX TRE: GPI reads and SPI clock only, no
 GPI memory writes.
+CI run 39661430084 built commit 3c42a52; kernel SHA-256
+`5491d96ffc5ab08ae9a046f71c480369fe5aed4a4dd6c01d7ee7a8015e55c0a3`.
+`xnu/out-rain-ci/fts21/rain-display-touch-tx-shim/shim-boot.img` SHA-256
+`31b3316f850fdddc7e8b0e07ca2c527460f9fee38a0f97b44a0a8c9c7910c815`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
