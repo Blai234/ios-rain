@@ -78,6 +78,10 @@ TOUCH_TX_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsnoirq=1 rainftsstop=6'
 # rainftstrace=1 holds a 'mark' line 1.5 s before each register group, so a
 # video shows the last access before a hang.
 TOUCH_TXTRACE_CMDLINE = TOUCH_TX_CMDLINE + ' rainftstrace=1'
+# rainftss1=1 gives the GPI's context bank stage 1 identity tables (as
+# Linux translates its DMA) instead of the disabled-bank bypass.
+TOUCH_S1TRACE_CMDLINE = TOUCH_TXTRACE_CMDLINE + ' rainftss1=1'
+TOUCH_S1_CMDLINE = TOUCH_NOIRQ_CMDLINE + ' rainftss1=1'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -94,6 +98,8 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-noirq', TOUCH_NOIRQ_CMDLINE),
             ('touch-tx', TOUCH_TX_CMDLINE),
             ('touch-txtrace', TOUCH_TXTRACE_CMDLINE),
+            ('touch-s1trace', TOUCH_S1TRACE_CMDLINE),
+            ('touch-s1', TOUCH_S1_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 

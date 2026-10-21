@@ -99,7 +99,23 @@ CI run 39663877607 built commit be391e1; kernel SHA-256
 `26ba3b3c5b5a8785164629b5b043798797d5a1d169e3f58ee5785dd445bc28e5`.
 `xnu/out-rain-ci/fts22/rain-display-touch-txtrace-shim/shim-boot.img` SHA-256
 `51f357632c8571f410fccc4f2977a287798a41a1b8e47409d2cf5dd915a5333c`.
-Device test pending.
+touch-txtrace result (`IMG_0263.MOV`, reset): the last lines are `mark tx
+doorbell next`, `ringing the TX doorbell for a TX-only write`, then
+`RAIN FTS: mark` cut off mid-line. The single CPU stops right after the
+TX doorbell write, while printing, before any register read. So no MMIO
+read hangs; something takes the CPU away once the GPI really runs (the
+CONFIG0-only and RX-only doorbells never made the GPI do anything).
+Leading hypothesis: the GPI's memory access through the disabled-bank
+bypass faults at the hypervisor level, which handles it on CPU0 and
+never returns (watchdog). Linux never uses that bypass for the GPI; it
+translates with stage 1 tables. `rainftss1=1` now programs bank 47 like
+arm_smmu_write_context_bank: CBA2R.VA64, TCR2 (SEP upstream, 36-bit PA),
+TCR (EAE, EPD1, T0SZ 32, NC walks), TTBR0 -> a level 1 table at DMA
+page + 0x1000 with four 1 GiB identity blocks (MAIR attr 0x44, AF, RW),
+TLBIASID + sync, then SCTLR = M|TRE|AFE|CFRE (faults abort to the GPI,
+recorded in FSR/FSYNR0). smmu mode `Y` = done, `E` = readback failed.
+Variants: touch-s1trace (TX-only + trace + s1) and touch-s1 (full probe,
+noirq, s1). The `noirq=` line now also prints s1, sctlr, tcr, fsr, fsynr.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 

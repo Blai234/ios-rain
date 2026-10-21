@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1665 @@
+@@ -0,0 +1,1738 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -287,6 +287,20 @@ index 0000000..db48221
 +#define SMMU_GFSR        0x048u
 +#define SMMU_CB_FSR      0x058u
 +#define SMMU_CB_FAR      0x060u
++/* Context bank registers for a stage 1 AArch64 (LPAE, 4 KiB) context. */
++#define SMMU_CB_TCR2     0x010u
++#define SMMU_CB_TTBR0    0x020u
++#define SMMU_CB_TCR      0x030u
++#define SMMU_CB_MAIR0    0x038u
++#define SMMU_CB_FSYNR0   0x068u
++#define SMMU_CB_TLBIASID 0x610u
++#define SMMU_CB_TLBSYNC  0x7f0u
++#define SMMU_CB_TLBSTAT  0x7f4u
++#define SMMU_CBA2R(cb)   (0x800u + 4u * (cb))
++#define SCTLR_M_TRE_AFE_CFRE 0x27u     /* M, TRE, AFE, CFRE: faults abort the client */
++#define TCR_S1_IDENT     ((1u << 31) /* EAE */ | (1u << 23) /* EPD1 */ | 32u /* T0SZ: 4 GiB */)
++#define TCR2_S1          ((7u << 15) /* SEP upstream */ | 1u /* 36 bit PA */)
++#define GPI_PT_OFF       0x1000u        /* the level 1 table, in the DMA page */
 +#define SCR0_CLIENTPD    (1u << 0)
 +#define SCR0_EXIDENABLE  (1u << 3)
 +#define SCR0_USFCFG      (1u << 10)
@@ -319,12 +333,14 @@ index 0000000..db48221
 +	unsigned wp[2], ev_rp, ev_wp;
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
 +	bool noirq;                   /* rainftsnoirq: GPII interrupts left masked */
++	bool s1;                      /* rainftss1: identity stage 1 tables instead of bypass */
++	uint32_t s1_sctlr, s1_tcr;     /* readbacks after the stage 1 setup */
 +	bool trace;                   /* rainftstrace: hold a marker before each access group */
 +	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
 +	                               * 4 after one RX TRE fetch (no SPI clock),
 +	                               * 5 after one TX CONFIG0 TRE with an EOT event,
 +	                               * 6 after a TX-only SPI write with no event */
-+	uint32_t flt[6];              /* sGFSR, CB FSR, CB FAR lo/hi, ch1 RP, ch1 config */
++	uint32_t flt[7];              /* sGFSR, CB FSR, CB FAR lo/hi, ch1 RP, ch1 config, FSYNR0 */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
 +	uint32_t smmu_idr1, smmu_smr, smmu_cbar, smmu_sctlr;
@@ -606,6 +622,51 @@ index 0000000..db48221
 + * An unused bank is disabled when SCTLR.M is clear; other bits may remain
 + * set from firmware. Clear the whole SCTLR and verify before routing DMA.
 + */
++/*
++ * Give the bank a stage 1 identity map of the low 4 GiB, as Linux's
++ * arm-smmu would for a DMA domain instead of the disabled-bank bypass:
++ * AArch64 format (CBA2R.VA64), T0SZ 32, four 1 GiB block descriptors
++ * (normal non-cacheable, AF set, read/write), translation table walks
++ * non-cacheable (the table is cleaned to memory), and faults reported in
++ * FSR and aborted back to the GPI (CFRE) rather than stalled.
++ */
++static bool
++fts_smmu_s1(vm_offset_t cbpage, vm_offset_t gr1, int cb)
++{
++	volatile uint64_t *l1 = (volatile uint64_t *)(st.dma + GPI_PT_OFF);
++	uint64_t pt = st.dma_pa + GPI_PT_OFF;
++
++	for (unsigned i = 0; i < 512u; i++) {
++		l1[i] = 0;
++	}
++	for (uint64_t i = 0; i < 4u; i++) {
++		l1[i] = (i << 30) | (1u << 10) /* AF */ | (1u << 6) /* AP: RW */ |
++		    (0u << 2) /* AttrIndx 0 */ | 1u /* block */;
++	}
++	flush_dcache64((addr64_t)pt, 0x1000u, TRUE);
++	__asm__ volatile("dsb sy" ::: "memory");
++
++	fts_wr(gr1, SMMU_CBA2R(cb), 1u /* VA64 */);
++	fts_wr(cbpage, SMMU_CB_TCR2, TCR2_S1);
++	fts_wr(cbpage, SMMU_CB_TCR, TCR_S1_IDENT);
++	fts_wr(cbpage, SMMU_CB_TTBR0, (uint32_t)pt);
++	fts_wr(cbpage, SMMU_CB_TTBR0 + 4u, (uint32_t)(pt >> 32));
++	fts_wr(cbpage, SMMU_CB_TTBR0 + 8u, 0);
++	fts_wr(cbpage, SMMU_CB_TTBR0 + 12u, 0);
++	fts_wr(cbpage, SMMU_CB_MAIR0, 0x44u /* attr 0: normal non-cacheable */);
++	fts_wr(cbpage, SMMU_CB_FSR, fts_rd(cbpage, SMMU_CB_FSR));
++	fts_wr(cbpage, SMMU_CB_TLBIASID, 0);
++	fts_wr(cbpage, SMMU_CB_TLBSYNC, 0);
++	for (unsigned n = 0; n < 1000u && (fts_rd(cbpage, SMMU_CB_TLBSTAT) & 1u); n++) {
++		fts_pause();
++	}
++	fts_wr(cbpage, 0, SCTLR_M_TRE_AFE_CFRE);
++	st.s1_sctlr = fts_rd(cbpage, 0);
++	st.s1_tcr = fts_rd(cbpage, SMMU_CB_TCR);
++	return st.s1_sctlr == SCTLR_M_TRE_AFE_CFRE && st.s1_tcr == TCR_S1_IDENT &&
++	    fts_rd(cbpage, SMMU_CB_TTBR0) == (uint32_t)pt;
++}
++
 +static bool
 +fts_smmu_bypass_quirk(unsigned idx, unsigned n, bool exids)
 +{
@@ -690,12 +751,18 @@ index 0000000..db48221
 +			st.smmu_mode = 'C';
 +			return false;
 +		}
++		if (st.s1 && !fts_smmu_s1(cbpage, gr1, cb)) {
++			fts_wr(cbpage, 0, 0);
++			fts_wr(gr1, (unsigned)cb * 4u, old_cbar);
++			st.smmu_mode = 'E';
++			return false;
++		}
 +		fts_wr(st.smmu, SMMU_S2CR(idx), (uint32_t)cb |
 +		    (exids ? S2CR_EXIDVALID : 0));
 +		st.smmu_s2cr = fts_rd(st.smmu, SMMU_S2CR(idx));
 +		if (S2CR_TYPE(st.smmu_s2cr) == 0 &&
 +		    (st.smmu_s2cr & 0xffu) == (unsigned)cb) {
-+			st.smmu_mode = 'Q';
++			st.smmu_mode = st.s1 ? 'Y' : 'Q';
 +			return true;
 +		}
 +		fts_wr(st.smmu, SMMU_S2CR(idx), old_s2cr);
@@ -714,7 +781,8 @@ index 0000000..db48221
 + * translate, F matched fault, u unmatched fault, b bypass programmed here,
 + * N no free stream/context bank, W the bypass did not stick, X shared SID,
 + * M mapping failure, D SCTLR clear failed, C context bank setup failed,
-+ * Q Qualcomm bypass quirk.
++ * Q Qualcomm bypass quirk, Y the quirk's bank with stage 1 identity tables,
++ * E the stage 1 setup did not read back.
 + */
 +static bool
 +fts_smmu(void)
@@ -1131,6 +1199,7 @@ index 0000000..db48221
 +		st.flt[1] = fts_rd(cbpage, SMMU_CB_FSR);
 +		st.flt[2] = fts_rd(cbpage, SMMU_CB_FAR);
 +		st.flt[3] = fts_rd(cbpage, SMMU_CB_FAR + 4u);
++		st.flt[6] = fts_rd(cbpage, SMMU_CB_FSYNR0);
 +	}
 +	fts_mark("gpi rx channel reads");
 +	st.flt[4] = gpi_rd(GPI_CH_CNTXT(1) + CTX_RP_LO);
@@ -1469,7 +1538,8 @@ index 0000000..db48221
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
 +		    st.ev_last[0], st.ev_last[1]);
-+		printf("RAIN FTS: %s noirq=%d\n", stage, st.noirq);
++		printf("RAIN FTS: %s noirq=%d s1=%d sctlr=%#x tcr=%#x fsr=%#x fsynr=%#x\n",
++		    stage, st.noirq, st.s1, st.s1_sctlr, st.s1_tcr, st.flt[1], st.flt[6]);
 +		printf("RAIN FTS: %s xsnap wp0=%#x rp1=%#x wp1=%#x evrp=%#x evwp=%#x se=%#x mirq=%#x ios=%#x\n",
 +		    stage, st.xsnap[0], st.xsnap[1], st.xsnap[2], st.xsnap[3],
 +		    st.xsnap[4], st.xsnap[5], st.xsnap[6], st.xsnap[7]);
@@ -1492,6 +1562,9 @@ index 0000000..db48221
 +	int trace = 0;
 +	(void)PE_parse_boot_argn("rainftstrace", &trace, sizeof(trace));
 +	st.trace = trace != 0;
++	int s1 = 0;
++	(void)PE_parse_boot_argn("rainftss1", &s1, sizeof(s1));
++	st.s1 = s1 != 0;
 +	if (delay_s > 0) {
 +		printf("RAIN FTS: starting in %u s\n", delay_s);
 +		fts_sleep(delay_s * 1000u);
