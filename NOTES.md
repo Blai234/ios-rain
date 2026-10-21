@@ -133,6 +133,11 @@ Next: a read-only survey (variant touch-survey: no rainftssmmu, stop 1)
 prints every valid stream entry `sme <idx> smr s2cr cb sctlr cbar ttbr tcr`
 to see how the working UFS stream is configured, then copy it (or share
 its bank) for the GPI.
+CI run 39669244844 built commit e37f2c3; kernel SHA-256
+`c7e561304da137f9f068659bd3a5c24ffbc72c3416858bf6eb903e61c2a9ed29`.
+`xnu/out-rain-ci/fts24/rain-display-touch-survey-shim/shim-boot.img` SHA-256
+`c80a374804f8dbecabf95a77b9279f42bf9e971c6813a5d225c1a82b9e27008f`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
