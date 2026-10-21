@@ -88,6 +88,12 @@ TOUCH_SURVEY_CMDLINE = TOUCH_ID_CMDLINE.replace(' rainftssmmu=1', '') + ' rainft
 # rainftscb=0 routes the GPI's stream to bank 0, a bank the firmware set up
 # for its own DMA (SCTLR 0xe0, CBAR 0x1f000), instead of a bank of our own.
 TOUCH_SHARE_CMDLINE = TOUCH_NOIRQ_CMDLINE + ' rainftscb=0 rainftstrace=1'
+# Keep the firmware bank route, but issue only the TX write. This isolates
+# the full SPI transaction from the first working TX doorbell.
+TOUCH_SHARE_TX_CMDLINE = TOUCH_TXTRACE_CMDLINE + ' rainftscb=0'
+# CONFIG0 and GO only; no TX DMA descriptor. A reset here would implicate
+# starting the SE SPI command, while survival points at the DMA/data step.
+TOUCH_SHARE_GO_CMDLINE = TOUCH_SHARE_CMDLINE + ' rainftsstop=7'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -108,6 +114,8 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-s1', TOUCH_S1_CMDLINE),
             ('touch-survey', TOUCH_SURVEY_CMDLINE),
             ('touch-share', TOUCH_SHARE_CMDLINE),
+            ('touch-share-tx', TOUCH_SHARE_TX_CMDLINE),
+            ('touch-share-go', TOUCH_SHARE_GO_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 

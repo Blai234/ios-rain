@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FT8006S shared-bank TX split — 2026-10-21
+
+The fts25 `touch-share` image (commit `5601e07`, CI `39672293044`, image
+SHA-256 `ea40b442649c212c2883c63e10a30ae6a660915bcd2d26955519c5e0e14d2e90`)
+was temporarily booted with the Xiaomi Fastboot tool, which identified product
+`rain`; the phone rebooted during this test. There is no photo of its final
+`RAIN FTS` marker, so the precise last executed step is unobserved.
+
+To isolate the RX/full-duplex portion, the same verified CI kernel was
+repackaged with `rainftsstop=6 rainftscb=0 rainftstrace=1` as fts26
+`touch-share-tx` (image SHA-256
+`a23c4268a59b472ca1c0177625886d4b1738cf1bd41c4ec4ebed6adCCE4912EC`).
+`tools/validate_rain_payload.py --allow-volatile-ufs` passed, and a
+temporary `fastboot boot` succeeded on product `rain`. The phone rebooted
+again. Without a last-marker photo, this shows the TX-only path also causes
+the reboot with firmware bank 0; it does not identify the exact instruction.
+The current patch adds `rainftsstop=7`: CONFIG0 then GO TX with no DMA TRE,
+to split SE command start from TX data fetch. Variant `touch-share-go` uses
+the same firmware bank 0. Build it in CI, package a temporary image, and
+compare whether the phone reboots. A quiet result still requires the ring
+pointer/SE status photo before drawing a hardware conclusion.
+
 ## Rain FTS reset bisection — 2026-10-21
 
 The fts14 temporary boot (commit 04a0a33) rebooted the phone during the
