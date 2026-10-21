@@ -1,5 +1,25 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FTS newly allocated SMMU stream — 2026-10-21
+
+CI run 39613179756 built commit cd0a6d0; kernel SHA-256
+`84702d595519389fde4401250f83f11a96c02f87155453b6df70736b420860cd`.
+The fts11 temporary boot image is
+`xnu/out-rain-ci/fts11/rain-display-touch-id-shim/shim-boot.img`, SHA-256
+`6e6d852655fcb9e7f9fe0cdddc43ca916ae40d14bd3bf488da3273d0a5b6417b`.
+`fastboot boot` succeeded on product `rain`. `IMG_0235.jpeg` shows
+`gpi=s smmu=W idx=5 s2cr=0x20000` and the new `smmu id1=0 smr=0 cb=-1`
+fields. Those fields are zero because the quirk function was not called:
+the code only entered it for an *existing* matching stream. Index 5 was
+newly reserved and programmed with exact SID 0xf6. No GPI DMA was attempted
+(`id_err=-1`, no touch events). This is a control-flow bug, not evidence that
+hardware IDR1 reads zero.
+
+Patch 0082 now also attempts the Qualcomm quirk on the newly allocated exact
+stream, after verifying the SMR ID, mask and valid state. DMA remains withheld
+unless the unused disabled context bank, CBAR write and TRANS S2CR all verify.
+Host syntax passes. Kernel CI and device test of this change are pending.
+
 ## Rain FT8006S SMMU bypass quirk — 2026-10-21
 
 `IMG_0223.jpeg` from the fts10 temporary boot shows `gpi=s smmu=W
@@ -11,9 +31,9 @@ streams through a disabled stage-1 context bank configured for stage-2
 bypass. Patch 0082 now contains a guarded version for the exact existing
 GPI SID: it checks that the chosen context bank is disabled and unreferenced,
 verifies CBAR and S2CR writes, and leaves GPI withheld if either fails.
-Its repeat log adds IDR1, SMR, context bank, CBAR and SCTLR. Host C syntax
-passes; kernel CI and device boot are still pending. Do not count touch as
-working until the FT8006S ID read and input events are observed.
+Its repeat log adds IDR1, SMR, context bank, CBAR and SCTLR. The first
+device boot is recorded above. Do not count touch as working until the
+FT8006S ID read and input events are observed.
 
 ## Rain SE0 is GSI-only: GPI DMA path added — 2026-10-21
 

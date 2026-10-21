@@ -563,8 +563,8 @@ index 0000000..db48221
 + * Some Qualcomm firmware substitutes FAULT for a BYPASS S2CR write.
 + * Linux's qcom_smmu_write_s2cr uses a disabled context bank configured
 + * for stage-1 translation / stage-2 bypass instead. Restrict that quirk
-+ * to the GPI's exact existing SID; never repoint a masked/shared SMR or a
-+ * context bank already used by another stream.
++ * to the GPI's exact SID, including a slot just reserved for it; never
++ * repoint a masked/shared SMR or a context bank used by another stream.
 + */
 +static bool
 +fts_smmu_bypass_quirk(unsigned idx, unsigned n, bool exids)
@@ -578,8 +578,10 @@ index 0000000..db48221
 +
 +	st.smmu_idr1 = id1;
 +	st.smmu_smr = fts_rd(st.smmu, SMMU_SMR(idx));
-+	if ((st.smmu_smr & 0xffffu) != GPI_SID ||
++	if ((st.smmu_smr & (exids ? 0xffffu : 0x7fffu)) != GPI_SID ||
 +	    ((st.smmu_smr >> 16) & (exids ? 0xffffu : 0x7fffu)) != 0 ||
++	    (!exids && !(st.smmu_smr & SMR_VALID)) ||
++	    (exids && !(st.smmu_s2cr & S2CR_EXIDVALID)) ||
 +	    !ncb || ncb > 128u || ns2cb >= ncb ||
 +	    cbbase >= 0x80000u || pgsize > 0x80000u - cbbase) {
 +		st.smmu_mode = 'X';
@@ -658,7 +660,6 @@ index 0000000..db48221
 +	uint32_t scr0 = fts_rd(st.smmu, SMMU_SCR0);
 +	unsigned n = fts_rd(st.smmu, SMMU_IDR0) & 0xffu, free_i = n, i;
 +	bool exids = (scr0 & SCR0_EXIDENABLE) != 0;
-+	bool matched;
 +	int allow = 0;
 +
 +	st.smmu_scr0 = scr0;
@@ -721,7 +722,6 @@ index 0000000..db48221
 +		st.smmu_mode = 'N';
 +		return false;
 +	}
-+	matched = st.smmu_idx >= 0;
 +	/* arm_smmu_write_sme order: the S2CR first, then the valid SMR. */
 +	fts_wr(st.smmu, SMMU_S2CR(i), S2CR_BYPASS | (exids ? S2CR_EXIDVALID : 0));
 +	if (st.smmu_idx < 0) {
@@ -731,7 +731,7 @@ index 0000000..db48221
 +	st.smmu_s2cr = fts_rd(st.smmu, SMMU_S2CR(i));
 +	if (S2CR_TYPE(st.smmu_s2cr) != 1u) {
 +		st.smmu_mode = 'W';
-+		return matched && S2CR_TYPE(st.smmu_s2cr) == 2u &&
++		return S2CR_TYPE(st.smmu_s2cr) == 2u &&
 +		    fts_smmu_bypass_quirk(i, n, exids);
 +	}
 +	if ((fts_rd(st.smmu, SMMU_SMR(i)) & 0xffffu) != GPI_SID) {
