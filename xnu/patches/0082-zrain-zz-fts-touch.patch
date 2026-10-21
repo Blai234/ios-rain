@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1474 @@
+@@ -0,0 +1,1479 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -313,7 +313,7 @@ index 0000000..db48221
 +	uint64_t dma_pa;
 +	unsigned wp[2], ev_rp, ev_wp;
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
-+	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init */
++	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
 +	uint32_t smmu_idr1, smmu_smr, smmu_cbar, smmu_sctlr;
@@ -1428,6 +1428,11 @@ index 0000000..db48221
 +	fts_se_setup(4u); /* 19.2 MHz / 4 = 4.8 MHz */
 +	if (st.dead) {
 +		fts_repeat("se-busy");
++		return;
++	}
++	if (st.stop == 3) {
++		printf("RAIN FTS: SE set up; stopping before the first transfer\n");
++		fts_repeat("stop-se");
 +		return;
 +	}
 +	fts_probe_id();

@@ -16,7 +16,13 @@ touch-smmu result (`IMG_0251.jpeg`, no reset): `stop-smmu gpi=S smmu=Q
 scr0=0x2f0406 idx=5 s2cr=0x2f`, `id1=0x50000030 smr=0x800000f6 cb=47
 cbar=0x10000 sctlr=0`, scan `ref=0 map=1 busy=0 sample=47/0x15c34106/0`.
 The S1-bypass bank and the TRANS S2CR stick and are harmless on their own,
-so the fts14 reset is in GPI bring-up or the first DMA. touch-gpi pending.
+so the fts14 reset is in GPI bring-up or the first DMA.
+touch-gpi result (`IMG_0253.jpeg`, no reset): `stop-gpi gpi=k smmu=Q
+scr0=0x2b0406 s2cr=0x2f pa=0x83b0c000`, `gsnap ch=0x1020000a/0x10200102
+ev=0x10110002 rp=0x83b0c000 err=0`: both channels started, event ring
+allocated, no error. The reset is after channel start: pin mux (already
+done without a reset in fts8), GSI-mode SE setup, or the first GPI DMA.
+`rainftsstop=3` (stage `stop-se`, variant touch-se) stops after the SE setup.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
