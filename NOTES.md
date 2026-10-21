@@ -1,5 +1,20 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FT8006S SMMU bypass quirk — 2026-10-21
+
+`IMG_0223.jpeg` from the fts10 temporary boot shows `gpi=s smmu=W
+scr0=0x2b0406 idx=5 s2cr=0x20000`: the GPI's stream 0xf6 is present,
+but a BYPASS S2CR write reads back as FAULT. `id_err=-1` confirms no
+touchscreen transfer was attempted. Upstream Linux's Qualcomm SMMU driver
+documents firmware that substitutes FAULT for BYPASS and routes those
+streams through a disabled stage-1 context bank configured for stage-2
+bypass. Patch 0082 now contains a guarded version for the exact existing
+GPI SID: it checks that the chosen context bank is disabled and unreferenced,
+verifies CBAR and S2CR writes, and leaves GPI withheld if either fails.
+Its repeat log adds IDR1, SMR, context bank, CBAR and SCTLR. Host C syntax
+passes; kernel CI and device boot are still pending. Do not count touch as
+working until the FT8006S ID read and input events are observed.
+
 ## Rain SE0 is GSI-only: GPI DMA path added — 2026-10-21
 
 The fts9 boot (`pictures/IMG_0187`–`0196`) printed

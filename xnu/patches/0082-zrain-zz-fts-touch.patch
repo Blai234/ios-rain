@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1330 @@
+@@ -0,0 +1,1429 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -272,12 +272,13 @@ index 0000000..db48221
 +/*
 + * The apps SMMU. The GPI masters with stream id 0xf6 (its iommus cell);
 + * Android translates it, so before DMA with physical addresses the stream
-+ * has to bypass. Only global register space 0 is read here.
++ * has to bypass. Only this one stream's mapping is changed here.
 + */
 +#define SMMU_PA          0x0c600000u
 +#define SMMU_LEN         0x00001000u
 +#define SMMU_SCR0        0x000u
 +#define SMMU_IDR0        0x020u
++#define SMMU_IDR1        0x024u
 +#define SMMU_SMR(i)      (0x800u + 4u * (i))
 +#define SMMU_S2CR(i)     (0xc00u + 4u * (i))
 +#define SCR0_CLIENTPD    (1u << 0)
@@ -313,10 +314,12 @@ index 0000000..db48221
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
++	uint32_t smmu_idr1, smmu_smr, smmu_cbar, smmu_sctlr;
++	int smmu_cb;
 +	uint32_t gpi_before[3];       /* ch0, ch1, ev context word 0 at entry */
 +	uint32_t gsnap[8];            /* ch0, ch1, ev, ch0 rp, glob, gpii, err, type */
 +	uint32_t ev_last[2];          /* dword 2 and 3 of the last event */
-+} st = { .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1 };
++} st = { .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1, .smmu_cb = -1 };
 +static int fts_sleep_chan;
 +
 +static uint32_t
@@ -557,10 +560,97 @@ index 0000000..db48221
 +}
 +
 +/*
++ * Some Qualcomm firmware substitutes FAULT for a BYPASS S2CR write.
++ * Linux's qcom_smmu_write_s2cr uses a disabled context bank configured
++ * for stage-1 translation / stage-2 bypass instead. Restrict that quirk
++ * to the GPI's exact existing SID; never repoint a masked/shared SMR or a
++ * context bank already used by another stream.
++ */
++static bool
++fts_smmu_bypass_quirk(unsigned idx, unsigned n, bool exids)
++{
++	uint32_t id1 = fts_rd(st.smmu, SMMU_IDR1);
++	unsigned pgshift = (id1 & (1u << 31)) ? 16u : 12u;
++	unsigned pgsize = 1u << pgshift;
++	unsigned cbbase = (1u << (((id1 >> 28) & 7u) + 1u)) << pgshift;
++	unsigned ncb = id1 & 0xffu, ns2cb = (id1 >> 16) & 0xffu;
++	vm_offset_t gr1;
++
++	st.smmu_idr1 = id1;
++	st.smmu_smr = fts_rd(st.smmu, SMMU_SMR(idx));
++	if ((st.smmu_smr & 0xffffu) != GPI_SID ||
++	    ((st.smmu_smr >> 16) & (exids ? 0xffffu : 0x7fffu)) != 0 ||
++	    !ncb || ncb > 128u || ns2cb >= ncb ||
++	    cbbase >= 0x80000u || pgsize > 0x80000u - cbbase) {
++		st.smmu_mode = 'X';
++		return false;
++	}
++	gr1 = ml_io_map(SMMU_PA + pgsize, pgsize);
++	if (!gr1) {
++		st.smmu_mode = 'M';
++		return false;
++	}
++	for (int cb = (int)ncb - 1; cb >= (int)ns2cb; cb--) {
++		vm_offset_t cbpage;
++		unsigned off = cbbase + (unsigned)cb * pgsize;
++		bool referenced = false;
++		uint32_t old_cbar, sctlr;
++
++		if (off > 0x80000u - pgsize)
++			continue;
++		for (unsigned j = 0; j < n; j++) {
++			uint32_t smr = fts_rd(st.smmu, SMMU_SMR(j));
++			uint32_t s2cr = fts_rd(st.smmu, SMMU_S2CR(j));
++			bool valid = exids ? (s2cr & S2CR_EXIDVALID) != 0 :
++			    (smr & SMR_VALID) != 0;
++			if (valid && S2CR_TYPE(s2cr) == 0 &&
++			    (s2cr & 0xffu) == (unsigned)cb) {
++				referenced = true;
++				break;
++			}
++		}
++		if (referenced)
++			continue;
++		cbpage = ml_io_map(SMMU_PA + off, pgsize);
++		if (!cbpage) {
++			st.smmu_mode = 'M';
++			return false;
++		}
++		sctlr = fts_rd(cbpage, 0);
++		if (sctlr != 0)
++			continue;
++		old_cbar = fts_rd(gr1, (unsigned)cb * 4u);
++		st.smmu_cb = cb;
++		st.smmu_sctlr = sctlr;
++		fts_wr(gr1, (unsigned)cb * 4u, 1u << 16);
++		st.smmu_cbar = fts_rd(gr1, (unsigned)cb * 4u);
++		if ((st.smmu_cbar & (3u << 16)) != (1u << 16)) {
++			fts_wr(gr1, (unsigned)cb * 4u, old_cbar);
++			st.smmu_mode = 'C';
++			return false;
++		}
++		fts_wr(st.smmu, SMMU_S2CR(idx), (uint32_t)cb |
++		    (exids ? S2CR_EXIDVALID : 0));
++		st.smmu_s2cr = fts_rd(st.smmu, SMMU_S2CR(idx));
++		if (S2CR_TYPE(st.smmu_s2cr) == 0 &&
++		    (st.smmu_s2cr & 0xffu) == (unsigned)cb) {
++			st.smmu_mode = 'Q';
++			return true;
++		}
++		fts_wr(gr1, (unsigned)cb * 4u, old_cbar);
++		st.smmu_mode = 'W';
++		return false;
++	}
++	st.smmu_mode = 'N';
++	return false;
++}
++
++/*
 + * Decide whether the GPI's stream can reach memory by physical address.
 + * smmu_mode: P SMMU off, B matched bypass, U unmatched bypass, T matched
 + * translate, F matched fault, u unmatched fault, b bypass programmed here,
-+ * N no free stream match register, W the bypass did not stick.
++ * N no free stream/context bank, W the bypass did not stick, X shared SID,
++ * M mapping failure, C context bank setup failed, Q Qualcomm bypass quirk.
 + */
 +static bool
 +fts_smmu(void)
@@ -568,6 +658,7 @@ index 0000000..db48221
 +	uint32_t scr0 = fts_rd(st.smmu, SMMU_SCR0);
 +	unsigned n = fts_rd(st.smmu, SMMU_IDR0) & 0xffu, free_i = n, i;
 +	bool exids = (scr0 & SCR0_EXIDENABLE) != 0;
++	bool matched;
 +	int allow = 0;
 +
 +	st.smmu_scr0 = scr0;
@@ -630,6 +721,7 @@ index 0000000..db48221
 +		st.smmu_mode = 'N';
 +		return false;
 +	}
++	matched = st.smmu_idx >= 0;
 +	/* arm_smmu_write_sme order: the S2CR first, then the valid SMR. */
 +	fts_wr(st.smmu, SMMU_S2CR(i), S2CR_BYPASS | (exids ? S2CR_EXIDVALID : 0));
 +	if (st.smmu_idx < 0) {
@@ -637,9 +729,13 @@ index 0000000..db48221
 +	}
 +	st.smmu_idx = (int)i;
 +	st.smmu_s2cr = fts_rd(st.smmu, SMMU_S2CR(i));
-+	if (S2CR_TYPE(st.smmu_s2cr) != 1u ||
-+	    (fts_rd(st.smmu, SMMU_SMR(i)) & 0xffffu) != GPI_SID) {
++	if (S2CR_TYPE(st.smmu_s2cr) != 1u) {
 +		st.smmu_mode = 'W';
++		return matched && S2CR_TYPE(st.smmu_s2cr) == 2u &&
++		    fts_smmu_bypass_quirk(i, n, exids);
++	}
++	if ((fts_rd(st.smmu, SMMU_SMR(i)) & 0xffffu) != GPI_SID) {
++		st.smmu_mode = 'X';
 +		return false;
 +	}
 +	st.smmu_mode = 'b';
@@ -1168,6 +1264,9 @@ index 0000000..db48221
 +		    stage, st.gpi_stage, st.smmu_mode, st.smmu_scr0, st.smmu_idx,
 +		    st.smmu_s2cr, (unsigned long long)st.dma_pa, st.gpi_before[0],
 +		    st.gpi_before[1], st.gpi_before[2]);
++		printf("RAIN FTS: %s smmu id1=%#x smr=%#x cb=%d cbar=%#x sctlr=%#x\n",
++		    stage, st.smmu_idr1, st.smmu_smr, st.smmu_cb,
++		    st.smmu_cbar, st.smmu_sctlr);
 +		printf("RAIN FTS: %s gsnap ch=%#x/%#x ev=%#x rp=%#x glob=%#x gpii=%#x err=%#x type=%#x evt=%#x/%#x\n",
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
