@@ -1,5 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FTS reset bisection — 2026-10-21
+
+The fts14 temporary boot (commit 04a0a33) rebooted the phone during the
+console text, with battery left, about when the touch thread starts. fts10-13
+never reset, and none of them passed the SMMU step, so the reset is in the
+newly unlocked path: the context-bank/S2CR writes, GPI bring-up, or the first
+GPI DMA. Commit 0e9611b adds `rainftsstop` (1: stop after the SMMU step, stage
+`stop-smmu`, gpi=`S`; 2: stop after the channels start, stage `stop-gpi`) and
+the touch-smmu / touch-gpi variants. CI run 39650990270; kernel SHA-256
+`5072c262cee2447307998bd21214cab201256fd4f87763fadfb9d59b2fc5ab10`. Images in
+`xnu/out-rain-ci/fts15/`: touch-smmu `d99a4c65022f5722bae9a487b1fde590e7a604b10afbc3e5803f85354a916482`,
+touch-gpi `ce0947c21f6e085fe7b9071204ca9a4741233dc548dea862c300118ea86b402d`.
+Device tests pending: touch-smmu first.
+
 ## Rain FTS disabled context bank check — 2026-10-21
 
 `IMG_0247.jpeg` from the fts13 temporary boot shows `smmu=N`,
