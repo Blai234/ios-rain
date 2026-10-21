@@ -86,7 +86,15 @@ CI run 39661430084 built commit 3c42a52; kernel SHA-256
 `5491d96ffc5ab08ae9a046f71c480369fe5aed4a4dd6c01d7ee7a8015e55c0a3`.
 `xnu/out-rain-ci/fts21/rain-display-touch-tx-shim/shim-boot.img` SHA-256
 `31b3316f850fdddc7e8b0e07ca2c527460f9fee38a0f97b44a0a8c9c7910c815`.
-Device test pending.
+touch-tx **reset** as well (`IMG_0262.MOV`): GPI memory writes are not
+needed for it. The video shows no panic: the console freezes mid-line
+(~6 s after userland starts, matching the touch thread) and ~2-3 s later
+the phone resets, i.e. a hard CPU hang (cpus=1) and a watchdog. The red
+screen at the start is the shim's normal GIC/CPU diagnostic, not a crash.
+Suspect: a register read after the GPI really ran (SMMU GFSR/bank, GPI
+context, or SE status) stalls the bus. `rainftstrace=1` (variant
+touch-txtrace) prints a held `RAIN FTS: mark <step>` line 1.5 s before
+each access group so a video shows the last one.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 

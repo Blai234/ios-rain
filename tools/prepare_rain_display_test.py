@@ -75,6 +75,9 @@ TOUCH_CFG_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=5'
 TOUCH_NOIRQ_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsnoirq=1'
 # rainftsstop=6: a TX-only SPI write with no event, so the GPI writes nothing.
 TOUCH_TX_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsnoirq=1 rainftsstop=6'
+# rainftstrace=1 holds a 'mark' line 1.5 s before each register group, so a
+# video shows the last access before a hang.
+TOUCH_TXTRACE_CMDLINE = TOUCH_TX_CMDLINE + ' rainftstrace=1'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -90,6 +93,7 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-cfg', TOUCH_CFG_CMDLINE),
             ('touch-noirq', TOUCH_NOIRQ_CMDLINE),
             ('touch-tx', TOUCH_TX_CMDLINE),
+            ('touch-txtrace', TOUCH_TXTRACE_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 

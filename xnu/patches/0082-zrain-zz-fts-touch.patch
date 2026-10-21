@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1643 @@
+@@ -0,0 +1,1665 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -319,6 +319,7 @@ index 0000000..db48221
 +	unsigned wp[2], ev_rp, ev_wp;
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
 +	bool noirq;                   /* rainftsnoirq: GPII interrupts left masked */
++	bool trace;                   /* rainftstrace: hold a marker before each access group */
 +	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
 +	                               * 4 after one RX TRE fetch (no SPI clock),
 +	                               * 5 after one TX CONFIG0 TRE with an EOT event,
@@ -563,8 +564,18 @@ index 0000000..db48221
 +}
 +
 +static void
++fts_mark(const char *what)
++{
++	if (st.trace) {
++		printf("RAIN FTS: mark %s\n", what);
++		fts_sleep(1500);
++	}
++}
++
++static void
 +gpi_snapshot(void)
 +{
++	fts_mark("gpi context reads");
 +	st.gsnap[0] = gpi_rd(GPI_CH_CNTXT(0) + CTX_CONFIG);
 +	st.gsnap[1] = gpi_rd(GPI_CH_CNTXT(1) + CTX_CONFIG);
 +	st.gsnap[2] = gpi_rd(GPI_EV_CNTXT + CTX_CONFIG);
@@ -574,11 +585,13 @@ index 0000000..db48221
 +	st.gsnap[6] = gpi_rd(GPI_ERROR_LOG);
 +	st.gsnap[7] = gpi_rd(GPI_TYPE_IRQ);
 +	/* The doorbells land in the context WP; the serial engine shows a GO. */
++	fts_mark("gpi ring pointer reads");
 +	st.xsnap[0] = gpi_rd(GPI_CH_CNTXT(0) + CTX_WP_LO);
 +	st.xsnap[1] = gpi_rd(GPI_CH_CNTXT(1) + CTX_RP_LO);
 +	st.xsnap[2] = gpi_rd(GPI_CH_CNTXT(1) + CTX_WP_LO);
 +	st.xsnap[3] = gpi_rd(GPI_EV_CNTXT + CTX_RP_LO);
 +	st.xsnap[4] = gpi_rd(GPI_EV_CNTXT + CTX_WP_LO);
++	fts_mark("se status reads");
 +	st.xsnap[5] = fts_rd(st.geni, SE_STATUS);
 +	st.xsnap[6] = fts_rd(st.geni, SE_IRQ);
 +	st.xsnap[7] = fts_rd(st.geni, SE_IOS);
@@ -1090,9 +1103,11 @@ index 0000000..db48221
 +	    sizeof(hdr), TRE_TYPE(TRE_DMA));
 +	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
 +	__asm__ volatile("dsb sy" ::: "memory");
++	fts_mark("tx doorbell next");
 +	printf("RAIN FTS: ringing the TX doorbell for a TX-only write\n");
 +	fts_sleep(100);
 +	gpi_wr(GPI_CH_DB(0), (uint32_t)(st.dma_pa + GPI_TX_RING + st.wp[0] * GPI_EL_SIZE));
++	fts_mark("tx doorbell rung, waiting");
 +	fts_sleep(500);
 +	gpi_read_faults();
 +	printf("RAIN FTS: TX-only survived rp0=%#x se=%#x\n", st.gsnap[3], st.xsnap[5]);
@@ -1106,7 +1121,9 @@ index 0000000..db48221
 +	unsigned pgsize = (id1 & (1u << 31)) ? 0x10000u : 0x1000u;
 +	vm_offset_t cbpage = 0;
 +
++	fts_mark("smmu gfsr read");
 +	st.flt[0] = fts_rd(st.smmu, SMMU_GFSR);
++	fts_mark("smmu bank reads");
 +	if (st.smmu_cb >= 0) {
 +		cbpage = ml_io_map(SMMU_PA + st.smmu_cbbase + (unsigned)st.smmu_cb * pgsize, pgsize);
 +	}
@@ -1115,9 +1132,11 @@ index 0000000..db48221
 +		st.flt[2] = fts_rd(cbpage, SMMU_CB_FAR);
 +		st.flt[3] = fts_rd(cbpage, SMMU_CB_FAR + 4u);
 +	}
++	fts_mark("gpi rx channel reads");
 +	st.flt[4] = gpi_rd(GPI_CH_CNTXT(1) + CTX_RP_LO);
 +	st.flt[5] = gpi_rd(GPI_CH_CNTXT(1) + CTX_CONFIG);
 +	gpi_snapshot();
++	fts_mark("all reads done");
 +}
 +
 +/*
@@ -1470,6 +1489,9 @@ index 0000000..db48221
 +
 +	(void)PE_parse_boot_argn("rainftsdelay", &delay_s, sizeof(delay_s));
 +	(void)PE_parse_boot_argn("rainftsstop", &st.stop, sizeof(st.stop));
++	int trace = 0;
++	(void)PE_parse_boot_argn("rainftstrace", &trace, sizeof(trace));
++	st.trace = trace != 0;
 +	if (delay_s > 0) {
 +		printf("RAIN FTS: starting in %u s\n", delay_s);
 +		fts_sleep(delay_s * 1000u);
