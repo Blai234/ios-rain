@@ -121,7 +121,18 @@ CI run 39665699679 built commit 007dcf7; kernel SHA-256
 `xnu/out-rain-ci/fts23/rain-display-touch-s1trace-shim/shim-boot.img`
 `6f190c503322278ff8dbeeafa22927f70d4e801a21bae9bd574dd396d636a71f`;
 touch-s1 `b525363c5e481064e06a394ac89043d7c875e7f9f360248741e8aa7732561b1b`.
-Device test pending (s1trace first, with video).
+touch-s1trace result (`IMG_0264.MOV`, reset): identical freeze, cut off at
+`RAIN FTS: mark` right after the TX doorbell. Stage 1 identity tables do
+not change it, so the disabled-bank bypass alone is not the cause.
+Stock DTB: the GPI's SID 0xf6 is served by `anoc_1_tbu` (SIDs 0-0x3ff, no
+GDSC supply), the same TBU as UFS (SID 0x80), whose DMA already works under
+this kernel with physical addresses. The GPI has
+`qcom,iommu-dma-addr-pool = <0x100000 0x100000>` (Linux maps its rings at
+IOVA 1-2 MiB); the QUP wrapper (SID 0xe3) uses 0x40000000-0xffffffff.
+Next: a read-only survey (variant touch-survey: no rainftssmmu, stop 1)
+prints every valid stream entry `sme <idx> smr s2cr cb sctlr cbar ttbr tcr`
+to see how the working UFS stream is configured, then copy it (or share
+its bank) for the GPI.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 

@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1738 @@
+@@ -0,0 +1,1793 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -335,6 +335,9 @@ index 0000000..db48221
 +	bool noirq;                   /* rainftsnoirq: GPII interrupts left masked */
 +	bool s1;                      /* rainftss1: identity stage 1 tables instead of bypass */
 +	uint32_t s1_sctlr, s1_tcr;     /* readbacks after the stage 1 setup */
++	/* Read-only survey of the valid stream entries and their banks. */
++	unsigned sme_n;
++	uint32_t sme[12][7];          /* idx, SMR, S2CR, bank SCTLR, CBAR, TTBR0 lo, TCR */
 +	bool trace;                   /* rainftstrace: hold a marker before each access group */
 +	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
 +	                               * 4 after one RX TRE fetch (no SPI clock),
@@ -623,6 +626,52 @@ index 0000000..db48221
 + * set from firmware. Clear the whole SCTLR and verify before routing DMA.
 + */
 +/*
++ * Record every valid stream entry and, for a translating one, its
++ * context bank (SCTLR, CBAR, TTBR0 low word, TCR). Only reads. The UFS
++ * stream already DMAs to physical addresses under this kernel, so its
++ * entry shows a configuration the firmware accepts.
++ */
++static void
++fts_smmu_survey(unsigned n, bool exids)
++{
++	uint32_t id1 = fts_rd(st.smmu, SMMU_IDR1);
++	unsigned pgshift = (id1 & (1u << 31)) ? 16u : 12u;
++	unsigned pgsize = 1u << pgshift;
++	unsigned cbbase = (1u << (((id1 >> 28) & 7u) + 1u)) << pgshift;
++	vm_offset_t gr1 = ml_io_map(SMMU_PA + pgsize, pgsize);
++
++	st.sme_n = 0;
++	for (unsigned i = 0; i < n && st.sme_n < 12u; i++) {
++		uint32_t smr = fts_rd(st.smmu, SMMU_SMR(i));
++		uint32_t s2cr = fts_rd(st.smmu, SMMU_S2CR(i));
++		bool valid = exids ? (s2cr & S2CR_EXIDVALID) != 0 : (smr & SMR_VALID) != 0;
++		uint32_t *e = st.sme[st.sme_n];
++
++		if (!valid) {
++			continue;
++		}
++		e[0] = i;
++		e[1] = smr;
++		e[2] = s2cr;
++		e[3] = e[4] = e[5] = e[6] = 0xffffffffu;
++		if (S2CR_TYPE(s2cr) == 0 && gr1 && cbbase < 0x80000u) {
++			unsigned cb = s2cr & 0xffu;
++			unsigned off = cbbase + cb * pgsize;
++			vm_offset_t cbpage = off <= 0x80000u - pgsize ?
++			    ml_io_map(SMMU_PA + off, pgsize) : 0;
++
++			e[4] = fts_rd(gr1, cb * 4u);
++			if (cbpage) {
++				e[3] = fts_rd(cbpage, 0);
++				e[5] = fts_rd(cbpage, SMMU_CB_TTBR0);
++				e[6] = fts_rd(cbpage, SMMU_CB_TCR);
++			}
++		}
++		st.sme_n++;
++	}
++}
++
++/*
 + * Give the bank a stage 1 identity map of the low 4 GiB, as Linux's
 + * arm-smmu would for a DMA domain instead of the disabled-bank bypass:
 + * AArch64 format (CBA2R.VA64), T0SZ 32, four 1 GiB block descriptors
@@ -801,6 +850,7 @@ index 0000000..db48221
 +		n = 128u;
 +		free_i = n;
 +	}
++	fts_smmu_survey(n, exids);
 +	for (i = 0; i < n; i++) {
 +		uint32_t smr = fts_rd(st.smmu, SMMU_SMR(i));
 +		uint32_t s2cr = fts_rd(st.smmu, SMMU_S2CR(i));
@@ -1538,6 +1588,11 @@ index 0000000..db48221
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
 +		    st.ev_last[0], st.ev_last[1]);
++		for (unsigned k = 0; k < st.sme_n; k++) {
++			printf("RAIN FTS: %s sme %u smr=%#x s2cr=%#x cb sctlr=%#x cbar=%#x ttbr=%#x tcr=%#x\n",
++			    stage, st.sme[k][0], st.sme[k][1], st.sme[k][2], st.sme[k][3],
++			    st.sme[k][4], st.sme[k][5], st.sme[k][6]);
++		}
 +		printf("RAIN FTS: %s noirq=%d s1=%d sctlr=%#x tcr=%#x fsr=%#x fsynr=%#x\n",
 +		    stage, st.noirq, st.s1, st.s1_sctlr, st.s1_tcr, st.flt[1], st.flt[6]);
 +		printf("RAIN FTS: %s xsnap wp0=%#x rp1=%#x wp1=%#x evrp=%#x evwp=%#x se=%#x mirq=%#x ios=%#x\n",

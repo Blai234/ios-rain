@@ -82,6 +82,9 @@ TOUCH_TXTRACE_CMDLINE = TOUCH_TX_CMDLINE + ' rainftstrace=1'
 # Linux translates its DMA) instead of the disabled-bank bypass.
 TOUCH_S1TRACE_CMDLINE = TOUCH_TXTRACE_CMDLINE + ' rainftss1=1'
 TOUCH_S1_CMDLINE = TOUCH_NOIRQ_CMDLINE + ' rainftss1=1'
+# Read-only SMMU survey: no rainftssmmu, so nothing in the SMMU is written
+# and the GPI is withheld; the repeat lists every valid stream entry.
+TOUCH_SURVEY_CMDLINE = TOUCH_ID_CMDLINE.replace(' rainftssmmu=1', '') + ' rainftsstop=1'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -100,6 +103,7 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-txtrace', TOUCH_TXTRACE_CMDLINE),
             ('touch-s1trace', TOUCH_S1TRACE_CMDLINE),
             ('touch-s1', TOUCH_S1_CMDLINE),
+            ('touch-survey', TOUCH_SURVEY_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 
