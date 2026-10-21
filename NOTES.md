@@ -116,6 +116,12 @@ TLBIASID + sync, then SCTLR = M|TRE|AFE|CFRE (faults abort to the GPI,
 recorded in FSR/FSYNR0). smmu mode `Y` = done, `E` = readback failed.
 Variants: touch-s1trace (TX-only + trace + s1) and touch-s1 (full probe,
 noirq, s1). The `noirq=` line now also prints s1, sctlr, tcr, fsr, fsynr.
+CI run 39665699679 built commit 007dcf7; kernel SHA-256
+`126d6e0a39ee3e8bd51d2a3a99fc6bcf7d497725d1fdf3fdc901e0ceeafe43da`.
+`xnu/out-rain-ci/fts23/rain-display-touch-s1trace-shim/shim-boot.img`
+`6f190c503322278ff8dbeeafa22927f70d4e801a21bae9bd574dd396d636a71f`;
+touch-s1 `b525363c5e481064e06a394ac89043d7c875e7f9f360248741e8aa7732561b1b`.
+Device test pending (s1trace first, with video).
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
