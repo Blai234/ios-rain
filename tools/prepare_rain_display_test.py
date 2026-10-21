@@ -61,6 +61,10 @@ TOUCH_CMDLINE = CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainft
 TOUCH_QUIET_CMDLINE = CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainftssmmu=1'
 TOUCH_ID_CMDLINE = (CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainftssmmu=1'
                     ' rainftsprobe=1')
+# rainftsstop=1 stops after the SMMU change, 2 after GPI channel start, so
+# a reset can be pinned to one step.
+TOUCH_SMMU_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=1'
+TOUCH_GPI_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=2'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -69,6 +73,8 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('cpus4console', CPUS4_CONSOLE_CMDLINE),
             ('touch', TOUCH_CMDLINE),
             ('touch-id', TOUCH_ID_CMDLINE),
+            ('touch-smmu', TOUCH_SMMU_CMDLINE),
+            ('touch-gpi', TOUCH_GPI_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 

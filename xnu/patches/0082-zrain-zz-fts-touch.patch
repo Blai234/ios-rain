@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1461 @@
+@@ -0,0 +1,1474 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -313,6 +313,7 @@ index 0000000..db48221
 +	uint64_t dma_pa;
 +	unsigned wp[2], ev_rp, ev_wp;
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
++	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
 +	uint32_t smmu_idr1, smmu_smr, smmu_cbar, smmu_sctlr;
@@ -792,7 +793,8 @@ index 0000000..db48221
 + * are polled here, never taken), the event ring, then the TX and RX
 + * channels allocated and started. gpi_stage tells how far it got:
 + * m no memory, s SMMU refused, r reset of a used GPII failed,
-+ * e event ring, 0/1 channel allocate, 2/3 channel start, k ready.
++ * e event ring, 0/1 channel allocate, 2/3 channel start, k ready,
++ * S stopped after the SMMU step (rainftsstop=1).
 + */
 +static bool
 +fts_gpi_init(void)
@@ -818,6 +820,11 @@ index 0000000..db48221
 +	st.dma_pa = ptoa_64(pn);
 +	if (!fts_smmu()) {
 +		st.gpi_stage = 's';
++		return false;
++	}
++	/* rainftsstop=1 isolates the SMMU change from any GPI access. */
++	if (st.stop == 1) {
++		st.gpi_stage = 'S';
 +		return false;
 +	}
 +
@@ -1313,6 +1320,7 @@ index 0000000..db48221
 +	unsigned delay_s = 5;
 +
 +	(void)PE_parse_boot_argn("rainftsdelay", &delay_s, sizeof(delay_s));
++	(void)PE_parse_boot_argn("rainftsstop", &st.stop, sizeof(st.stop));
 +	if (delay_s > 0) {
 +		printf("RAIN FTS: starting in %u s\n", delay_s);
 +		fts_sleep(delay_s * 1000u);
@@ -1398,7 +1406,12 @@ index 0000000..db48221
 +		if (!fts_gpi_init()) {
 +			printf("RAIN FTS: GPI bring-up stopped at '%c' (smmu '%c')\n",
 +			    st.gpi_stage, st.smmu_mode);
-+			fts_repeat("gpi-withheld");
++			fts_repeat(st.gpi_stage == 'S' ? "stop-smmu" : "gpi-withheld");
++			return;
++		}
++		if (st.stop == 2) {
++			printf("RAIN FTS: GPI ready; stopping before any transfer\n");
++			fts_repeat("stop-gpi");
 +			return;
 +		}
 +	}
