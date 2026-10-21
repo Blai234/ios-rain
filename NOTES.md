@@ -27,7 +27,13 @@ CI run 39653784867 built commit b562bf4; kernel SHA-256
 `c92f1efa70a73cebb5968d4cdda5eb09db15693544713262b7404fee06aa6a91`;
 `xnu/out-rain-ci/fts16/rain-display-touch-se-shim/shim-boot.img` SHA-256
 `4e768666d2ca74d2ca75f46e4cc1b4c639beddc742be6c5913bc62d32d926226`.
-Device test pending.
+touch-se result (`IMG_0256.jpeg`, no reset): `stop-se cgc=0x7f gpi=k
+smmu=Q`, channels still started. So the fts14 reset is the first GPI
+transfer itself, after the doorbell: the GPI fetching TREs/data through the
+SMMU (suspected: the hypervisor rejects the S1-bypass bank) or the SPI cycle.
+`rainftsstop=4` (variant touch-rx, stage `stop-rx`) queues one RX DMA TRE,
+rings only the RX doorbell (a memory fetch, no SPI clock), then prints
+`fault gfsr= fsr= far= ch1rp= ch1=` (sGFSR 0x48, CB FSR 0x58, FAR 0x60).
 
 ## Rain FTS disabled context bank check — 2026-10-21
 

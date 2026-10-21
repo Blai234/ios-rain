@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1479 @@
+@@ -0,0 +1,1530 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -282,6 +282,9 @@ index 0000000..db48221
 +#define SMMU_SMR(i)      (0x800u + 4u * (i))
 +#define SMMU_S2CR(i)     (0xc00u + 4u * (i))
 +#define SMMU_SCTLR_M     (1u << 0)
++#define SMMU_GFSR        0x048u
++#define SMMU_CB_FSR      0x058u
++#define SMMU_CB_FAR      0x060u
 +#define SCR0_CLIENTPD    (1u << 0)
 +#define SCR0_EXIDENABLE  (1u << 3)
 +#define SCR0_USFCFG      (1u << 10)
@@ -313,7 +316,9 @@ index 0000000..db48221
 +	uint64_t dma_pa;
 +	unsigned wp[2], ev_rp, ev_wp;
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
-+	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup */
++	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
++	                               * 4 after one RX TRE fetch (no SPI clock) */
++	uint32_t flt[6];              /* sGFSR, CB FSR, CB FAR lo/hi, ch1 RP, ch1 config */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
 +	uint32_t smmu_idr1, smmu_smr, smmu_cbar, smmu_sctlr;
@@ -1017,6 +1022,42 @@ index 0000000..db48221
 +	return 0;
 +}
 +
++/*
++ * rainftsstop=4: queue a single RX DMA TRE and ring only the RX doorbell.
++ * The GPI fetches the TRE from memory through the SMMU stream, but with no
++ * GO on the TX channel the serial engine never clocks SPI. Then read the
++ * SMMU global and context-bank fault registers.
++ */
++static void
++gpi_rx_fetch_probe(void)
++{
++	uint32_t id1 = st.smmu_idr1;
++	unsigned pgsize = (id1 & (1u << 31)) ? 0x10000u : 0x1000u;
++	vm_offset_t cbpage = 0;
++
++	gpi_put(1, (uint32_t)(st.dma_pa + GPI_RX_BUF), (uint32_t)((st.dma_pa + GPI_RX_BUF) >> 32),
++	    16u, TRE_TYPE(TRE_DMA));
++	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
++	__asm__ volatile("dsb sy" ::: "memory");
++	printf("RAIN FTS: ringing the RX doorbell only\n");
++	fts_sleep(100);
++	gpi_wr(GPI_CH_DB(1), (uint32_t)(st.dma_pa + GPI_RX_RING + st.wp[1] * GPI_EL_SIZE));
++	fts_sleep(500);
++	st.flt[0] = fts_rd(st.smmu, SMMU_GFSR);
++	if (st.smmu_cb >= 0) {
++		cbpage = ml_io_map(SMMU_PA + st.smmu_cbbase + (unsigned)st.smmu_cb * pgsize, pgsize);
++	}
++	if (cbpage) {
++		st.flt[1] = fts_rd(cbpage, SMMU_CB_FSR);
++		st.flt[2] = fts_rd(cbpage, SMMU_CB_FAR);
++		st.flt[3] = fts_rd(cbpage, SMMU_CB_FAR + 4u);
++	}
++	st.flt[4] = gpi_rd(GPI_CH_CNTXT(1) + CTX_RP_LO);
++	st.flt[5] = gpi_rd(GPI_CH_CNTXT(1) + CTX_CONFIG);
++	gpi_snapshot();
++	printf("RAIN FTS: RX fetch survived gfsr=%#x fsr=%#x\n", st.flt[0], st.flt[1]);
++}
++
 +/* One full duplex SPI transfer. */
 +static int
 +fts_spi_xfer(const uint8_t *tx, unsigned txlen, uint8_t *rx, unsigned rxlen)
@@ -1310,6 +1351,11 @@ index 0000000..db48221
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
 +		    st.ev_last[0], st.ev_last[1]);
++		if (st.stop == 4) {
++			printf("RAIN FTS: %s fault gfsr=%#x fsr=%#x far=%#x%08x ch1rp=%#x ch1=%#x\n",
++			    stage, st.flt[0], st.flt[1], st.flt[3], st.flt[2],
++			    st.flt[4], st.flt[5]);
++		}
 +	}
 +}
 +
@@ -1433,6 +1479,11 @@ index 0000000..db48221
 +	if (st.stop == 3) {
 +		printf("RAIN FTS: SE set up; stopping before the first transfer\n");
 +		fts_repeat("stop-se");
++		return;
++	}
++	if (st.stop == 4 && st.gsi) {
++		gpi_rx_fetch_probe();
++		fts_repeat("stop-rx");
 +		return;
 +	}
 +	fts_probe_id();
