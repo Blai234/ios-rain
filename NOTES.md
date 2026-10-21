@@ -1,5 +1,25 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FTS context-bank survey — 2026-10-21
+
+CI run 39616868001 built commit bdb8c7b. Kernel SHA-256
+`29bbc41e48fd56e0f44b75150f2f5cc995e20633327b6cbe4a7cbc09ccdd96fe`;
+fts12 temporary boot image SHA-256
+`30dd8cc430e12d8e1e032866bc528747b67c8b66de22b4a069f370f427f74a1c`.
+The `fastboot boot` transfer succeeded. `IMG_0246.jpeg` shows
+`gpi=s smmu=N idx=5 s2cr=0x20000`, `id1=0x50000030`, exact
+`smr=0x800000f6`, and `cb=-1`. The quirk now runs, but its guarded scan
+finds no unused, disabled context bank. `id_err=-1` and zero GPI event
+state confirm no SPI transfer; touch remains absent. IDR1 describes 48
+context banks and a 0x40000 context-bank base (4 KiB pages). The register
+layout agrees with upstream Linux arm-smmu definitions.
+
+Patch 0082 now records how many banks are referenced, mapped and have a
+nonzero SCTLR, plus a sample bank's SCTLR and CBAR. This survey is read-only;
+the guarded GPI DMA path stays withheld. Host syntax passes; CI/device test
+of the survey is pending. Do not repurpose an active bank based only on
+`smmu=N`.
+
 ## Rain FTS newly allocated SMMU stream — 2026-10-21
 
 CI run 39613179756 built commit cd0a6d0; kernel SHA-256
@@ -18,7 +38,7 @@ hardware IDR1 reads zero.
 Patch 0082 now also attempts the Qualcomm quirk on the newly allocated exact
 stream, after verifying the SMR ID, mask and valid state. DMA remains withheld
 unless the unused disabled context bank, CBAR write and TRANS S2CR all verify.
-Host syntax passes. Kernel CI and device test of this change are pending.
+CI and device test results are recorded above.
 
 ## Rain FT8006S SMMU bypass quirk — 2026-10-21
 

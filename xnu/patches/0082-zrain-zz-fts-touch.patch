@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1429 @@
+@@ -0,0 +1,1447 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -316,10 +316,13 @@ index 0000000..db48221
 +	uint32_t smmu_scr0, smmu_s2cr;
 +	uint32_t smmu_idr1, smmu_smr, smmu_cbar, smmu_sctlr;
 +	int smmu_cb;
++	uint32_t smmu_cbbase, smmu_sample_sctlr, smmu_sample_cbar;
++	unsigned smmu_referenced, smmu_mapped, smmu_busy;
++	int smmu_sample_cb;
 +	uint32_t gpi_before[3];       /* ch0, ch1, ev context word 0 at entry */
 +	uint32_t gsnap[8];            /* ch0, ch1, ev, ch0 rp, glob, gpii, err, type */
 +	uint32_t ev_last[2];          /* dword 2 and 3 of the last event */
-+} st = { .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1, .smmu_cb = -1 };
++} st = { .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1, .smmu_cb = -1, .smmu_sample_cb = -1 };
 +static int fts_sleep_chan;
 +
 +static uint32_t
@@ -577,6 +580,7 @@ index 0000000..db48221
 +	vm_offset_t gr1;
 +
 +	st.smmu_idr1 = id1;
++	st.smmu_cbbase = cbbase;
 +	st.smmu_smr = fts_rd(st.smmu, SMMU_SMR(idx));
 +	if ((st.smmu_smr & (exids ? 0xffffu : 0x7fffu)) != GPI_SID ||
 +	    ((st.smmu_smr >> 16) & (exids ? 0xffffu : 0x7fffu)) != 0 ||
@@ -611,16 +615,26 @@ index 0000000..db48221
 +				break;
 +			}
 +		}
-+		if (referenced)
++		if (referenced) {
++			st.smmu_referenced++;
 +			continue;
++		}
 +		cbpage = ml_io_map(SMMU_PA + off, pgsize);
 +		if (!cbpage) {
 +			st.smmu_mode = 'M';
 +			return false;
 +		}
 +		sctlr = fts_rd(cbpage, 0);
-+		if (sctlr != 0)
++		st.smmu_mapped++;
++		if (st.smmu_sample_cb < 0) {
++			st.smmu_sample_cb = cb;
++			st.smmu_sample_sctlr = sctlr;
++			st.smmu_sample_cbar = fts_rd(gr1, (unsigned)cb * 4u);
++		}
++		if (sctlr != 0) {
++			st.smmu_busy++;
 +			continue;
++		}
 +		old_cbar = fts_rd(gr1, (unsigned)cb * 4u);
 +		st.smmu_cb = cb;
 +		st.smmu_sctlr = sctlr;
@@ -1267,6 +1281,10 @@ index 0000000..db48221
 +		printf("RAIN FTS: %s smmu id1=%#x smr=%#x cb=%d cbar=%#x sctlr=%#x\n",
 +		    stage, st.smmu_idr1, st.smmu_smr, st.smmu_cb,
 +		    st.smmu_cbar, st.smmu_sctlr);
++		printf("RAIN FTS: %s smmu scan base=%#x ref=%u map=%u busy=%u sample=%d/%#x/%#x\n",
++		    stage, st.smmu_cbbase, st.smmu_referenced, st.smmu_mapped,
++		    st.smmu_busy, st.smmu_sample_cb, st.smmu_sample_sctlr,
++		    st.smmu_sample_cbar);
 +		printf("RAIN FTS: %s gsnap ch=%#x/%#x ev=%#x rp=%#x glob=%#x gpii=%#x err=%#x type=%#x evt=%#x/%#x\n",
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
