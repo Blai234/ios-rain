@@ -46,6 +46,11 @@ the RX doorbell is harmless. The reset needs the TX side.
 `rainftsstop=5` (variant touch-cfg, stage `stop-cfg`) sends a lone TX
 CONFIG0 TRE with IEOT and no GO: a TRE read plus an event write to memory,
 no SPI clock. It prints `evt=` (event dwords 2/3; 0x22 type, code 2 EOT).
+CI run 39657167021 built commit eda97db; kernel SHA-256
+`2624553927838f4765a3c50711d2fc4ef308b59a75dbb9fbfd39f78aec1f753f`;
+`xnu/out-rain-ci/fts18/rain-display-touch-cfg-shim/shim-boot.img` SHA-256
+`36b38efa8f600a951f690fe7a496970368aab9d7bc69f063fa699f696000003a`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
