@@ -54,9 +54,13 @@ CPUS4_CONSOLE_CMDLINE = CONSOLE_CMDLINE.replace('cpus=1', 'cpus=4')
 # rainfts=1 starts the FT8006S touch driver. rainftstx=1 enables SPI
 # transfers and the touch poll loop. The console variant keeps the
 # driver's diagnostic output readable.
-TOUCH_CMDLINE = CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1'
-TOUCH_QUIET_CMDLINE = CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1'
-TOUCH_ID_CMDLINE = CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainftsprobe=1'
+# rainftssmmu=1 lets the driver give the GPI's SMMU stream (0xf6) a bypass
+# entry when unmatched streams would fault: SE0 is GSI only, so its bytes
+# move by GPI DMA at physical addresses.
+TOUCH_CMDLINE = CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainftssmmu=1'
+TOUCH_QUIET_CMDLINE = CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainftssmmu=1'
+TOUCH_ID_CMDLINE = (CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 rainftssmmu=1'
+                    ' rainftsprobe=1')
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),

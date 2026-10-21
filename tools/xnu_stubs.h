@@ -38,4 +38,26 @@ int kernel_thread_start(void (*fn)(void *, wait_result_t), void *arg, thread_t *
 void thread_deallocate(thread_t th);
 void sweet_hid_touch(int finger, int down, int x, int y);
 
+/* DMA memory and cache maintenance (vm/vm_kern.h, vm/pmap.h,
+ * arm/caches_internal.h). */
+typedef uint64_t addr64_t;
+typedef uint32_t ppnum_t;
+typedef int boolean_t;
+typedef void *vm_map_t;
+typedef void *pmap_t;
+#define TRUE 1
+#define FALSE 0
+#define PAGE_MASK 0x3fffULL
+#define KMA_DATA 0x1
+#define KMA_ZERO 0x2
+#define KMA_PERMANENT 0x4
+#define VM_KERN_MEMORY_IOKIT 26
+extern vm_map_t kernel_map;
+extern pmap_t kernel_pmap;
+kern_return_t kmem_alloc_contig(vm_map_t map, vm_offset_t *addrp, vm_size_t size,
+    vm_offset_t mask, ppnum_t max_pnum, ppnum_t pnum_mask, int flags, int tag);
+ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+#define ptoa_64(pn) ((uint64_t)(pn) << 14)
+void flush_dcache64(addr64_t addr, unsigned count, boolean_t phys);
+
 #endif /* RAIN_FTS_STUBS_H */

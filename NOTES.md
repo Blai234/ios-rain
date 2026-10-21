@@ -1,5 +1,33 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain SE0 is GSI-only: GPI DMA path added — 2026-10-21
+
+The fts9 boot (`pictures/IMG_0187`–`0196`) printed
+`gsi-only clk=1 se0=0x4220 ifdis=0x1 cgc=0`: GENI_IF_DISABLE_RO bit 0 is
+set, so SE0's FIFO interface is disabled in hardware and the CPU cannot
+push bytes into it. Android's spi-geni uses GPI DMA for it. From the stock
+DTB (`backup/rain-2026-10-19/vendor_boot_a.img`): `qcom,gpi-dma@4a00000`
+(len 0x60000, `qcom,gpi-ee-offset` 0x10000, `qcom,gpii-mask` 0xf,
+`iommus = <apps_smmu 0xf6 0>`), SE0 `dmas = <gpi 0 0 1 64 0>, <gpi 1 0 1
+64 0>` (TX ch 0, RX ch 1, SE 0, proto SPI, 64 TREs). apps-smmu@c600000 is
+`qcom,qsmmu-v500` with `qcom,skip-init`.
+
+Patch 0082 now follows upstream Linux v6.6 `drivers/dma/qcom/gpi.c` and
+`spi-geni-qcom.c` (copies in ignored `research/gpi/`): GPII registers at
+base + off - 0x10000; GPII 0; interrupts configured but polled; event ring,
+TX/RX channel allocate + start by polling the context CHSTATE; SE put in
+GSI mode (DMA_MODE_EN, GSI_EVENT_EN 0xf, SE_IRQ_EN 0); each transfer is
+RX DMA TRE + TX CONFIG0 (8-bit, packed, XO/4) + GO (duplex, CS0, LINK) +
+DMA (IEOT); completion = TX xfer-complete event code 2. One 16 KiB
+contiguous page holds the rings and buffers (physical addresses).
+SMMU: reads sCR0/SMRs/S2CRs for SID 0xf6; with `rainftssmmu=1` (now in the
+touch variants) it writes a bypass S2CR/SMR if the stream would fault.
+Repeat lines: `<stage> gpi=<c> smmu=<c> scr0 idx s2cr pa was=` and
+`<stage> gsnap ch= ev= rp= glob= gpii= err= type= evt=`. gpi stages:
+m memory, s SMMU refused, r reset failed, e event ring, 0/1 ch alloc,
+2/3 ch start, k ready. smmu modes: P disabled, B/U bypass, T translate,
+F/u fault, b bypass programmed, N no free SMR, W write did not stick.
+
 ## Rain FT8006S SPI ID probe, repeated result — 2026-10-20
 
 The `fts7` image (CI 39478321979, commit `dceead7`) was built but never

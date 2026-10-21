@@ -50,7 +50,8 @@ def main():
         # The XNU headers the driver includes, reduced to the stubs.
         for header in ('sys/param.h', 'sys/systm.h', 'sys/errno.h', 'kern/clock.h',
                        'kern/thread.h', 'kern/sched_prim.h', 'machine/machine_routines.h',
-                       'pexpert/pexpert.h'):
+                       'pexpert/pexpert.h', 'arm/caches_internal.h', 'vm/pmap.h',
+                       'vm/vm_kern.h'):
             path = tmp / header
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('#include "xnu_stubs.h"\n', encoding='utf-8')

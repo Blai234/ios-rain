@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,813 @@
+@@ -0,0 +1,1328 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -43,6 +43,9 @@ index 0000000..db48221
 +#include <kern/thread.h>
 +#include <kern/sched_prim.h>
 +#include <machine/machine_routines.h>
++#include <arm/caches_internal.h>
++#include <vm/pmap.h>
++#include <vm/vm_kern.h>
 +#include <pexpert/pexpert.h>
 +
 +extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
@@ -177,6 +180,113 @@ index 0000000..db48221
 +#define FTS_GCC_SE0_CBCR 0x0001f144u
 +#define FTS_GCC_CORE_CBCR 0x0001f00cu
 +
++/*
++ * GPI DMA (qcom,gpi-dma@4a00000). SE0's FIFO interface is disabled in
++ * hardware (GENI_IF_DISABLE_RO bit 0), so its bytes can only move through
++ * the GPI, as Android's spi-geni does. The layout is the upstream Linux
++ * gpi.c one: the GPII registers are at base + offset - qcom,gpi-ee-offset
++ * (0x10000). qcom,gpii-mask 0xf gives the application processor GPIIs
++ * 0..3; SE0's dmas cells are <tx ch 0, rx ch 1, se 0, proto SPI, 64 TREs>.
++ */
++#define GPI_PA           0x04a00000u
++#define GPI_LEN          0x00060000u
++#define GPI_EE_OFF       0x00010000u
++#define GPI_GPII         0u
++#define GPI_N            (0x4000u * GPI_GPII)
++#define GPI_CH_CNTXT(k)  (0x20000u + GPI_N + 0x80u * (k))
++#define GPI_CH_QOS(k)    (0x2005cu + GPI_N + 0x80u * (k))
++#define GPI_CH_SCRATCH(k, j) (0x20060u + GPI_N + 0x80u * (k) + 4u * (j))
++#define GPI_EV_CNTXT     (0x21000u + GPI_N)
++#define GPI_CH_DB(k)     (0x22000u + GPI_N + 0x8u * (k))
++#define GPI_EV_DB        (0x22100u + GPI_N)
++#define GPI_CH_CMD       (0x23008u + GPI_N)
++#define GPI_EV_CMD       (0x23010u + GPI_N)
++#define GPI_TYPE_IRQ     (0x23080u + GPI_N)
++#define GPI_TYPE_IRQ_MSK (0x23088u + GPI_N)
++#define GPI_SRC_CH_IRQ   (0x23090u + GPI_N)
++#define GPI_SRC_EV_IRQ   (0x23094u + GPI_N)
++#define GPI_SRC_CH_MSK   (0x23098u + GPI_N)
++#define GPI_SRC_EV_MSK   (0x2309cu + GPI_N)
++#define GPI_SRC_CH_CLR   (0x230a0u + GPI_N)
++#define GPI_SRC_EV_CLR   (0x230a4u + GPI_N)
++#define GPI_IEOB_MSK     (0x230b8u + GPI_N)
++#define GPI_IEOB_CLR     (0x230c0u + GPI_N)
++#define GPI_GLOB_STTS    (0x23100u + GPI_N)
++#define GPI_GLOB_EN      (0x23108u + GPI_N)
++#define GPI_GPII_STTS    (0x23118u + GPI_N)
++#define GPI_GPII_EN      (0x23120u + GPI_N)
++#define GPI_INTSET       (0x23180u + GPI_N)
++#define GPI_MSI_LSB      (0x23188u + GPI_N)
++#define GPI_MSI_MSB      (0x2318cu + GPI_N)
++#define GPI_ERROR_LOG    (0x23200u + GPI_N)
++#define GPI_SCRATCH0     (0x23400u + GPI_N)
++#define GPI_SCRATCH1     (0x23404u + GPI_N)
++
++/* The words of a channel or event ring context. */
++#define CTX_CONFIG       0x00u
++#define CTX_LEN          0x04u
++#define CTX_BASE_LO      0x08u
++#define CTX_BASE_HI      0x0cu
++#define CTX_RP_LO        0x10u
++#define CTX_INT_MOD      0x20u
++#define CTX_MSI_LO       0x28u
++#define CTX_MSI_HI       0x2cu
++#define CTX_RPU_LO       0x30u
++#define CTX_RPU_HI       0x34u
++#define CTX_STATE(v)     (((v) >> 20) & 0xfu)
++
++#define GPI_CMD_ALLOC    0u
++#define GPI_CMD_START    1u
++#define GPI_CMD_STOP     2u
++#define GPI_CMD_RESET    9u
++#define GPI_CMD_DEALLOC  10u
++#define GPI_PROTO_SPI    1u
++#define GPI_EL_SIZE      16u
++#define GPI_RING_EL      64u
++#define GPI_RING_LEN     (GPI_EL_SIZE * GPI_RING_EL)
++
++/* Transfer ring elements (TREs) and the events. */
++#define TRE_TYPE(t)      ((uint32_t)(t) << 16)
++#define TRE_DMA          0x10u
++#define TRE_GO           0x20u
++#define TRE_CONFIG0      0x22u
++#define TRE_CHAIN        (1u << 0)
++#define TRE_IEOT         (1u << 9)
++#define TRE_LINK         (1u << 11)
++#define TRE_C0_TX_PACK   (1u << 24)
++#define TRE_C0_RX_PACK   (1u << 25)
++#define SPI_GO_DUPLEX    3u
++#define EV_XFER_COMPLETE 0x22u
++#define EV_CODE_EOT      2u
++
++/* One page of DMA memory: both transfer rings, the event ring, buffers. */
++#define GPI_DMA_SIZE     0x4000u
++#define GPI_TX_RING      0x0000u
++#define GPI_RX_RING      0x0400u
++#define GPI_EV_RING      0x0800u
++#define GPI_TX_BUF       0x0c00u
++#define GPI_RX_BUF       0x0e00u
++
++/*
++ * The apps SMMU. The GPI masters with stream id 0xf6 (its iommus cell);
++ * Android translates it, so before DMA with physical addresses the stream
++ * has to bypass. Only global register space 0 is read here.
++ */
++#define SMMU_PA          0x0c600000u
++#define SMMU_LEN         0x00001000u
++#define SMMU_SCR0        0x000u
++#define SMMU_IDR0        0x020u
++#define SMMU_SMR(i)      (0x800u + 4u * (i))
++#define SMMU_S2CR(i)     (0xc00u + 4u * (i))
++#define SCR0_CLIENTPD    (1u << 0)
++#define SCR0_EXIDENABLE  (1u << 3)
++#define SCR0_USFCFG      (1u << 10)
++#define S2CR_TYPE(v)     (((v) >> 16) & 3u)
++#define S2CR_BYPASS      (1u << 16)
++#define S2CR_EXIDVALID   (1u << 10)
++#define SMR_VALID        (1u << 31)
++#define GPI_SID          0xf6u
++
 +static struct {
 +	vm_offset_t geni, tlmm, gcc;
 +	bool dead;
@@ -193,7 +303,18 @@ index 0000000..db48221
 +	uint8_t id[4];               /* the id pair and its CRC */
 +	uint32_t ifdis, cgc;          /* GENI_IF_DISABLE_RO and CGC_CTRL before init */
 +	uint32_t snap[6];             /* status, m_irq, tx_fifo, rx_fifo, ios, clk_cfg */
-+} st = { .clk = -1, .id_err = -1 };
++	/* The GSI path. */
++	bool gsi;
++	vm_offset_t gpi, smmu, dma;
++	uint64_t dma_pa;
++	unsigned wp[2], ev_rp, ev_wp;
++	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
++	int smmu_idx;
++	uint32_t smmu_scr0, smmu_s2cr;
++	uint32_t gpi_before[3];       /* ch0, ch1, ev context word 0 at entry */
++	uint32_t gsnap[8];            /* ch0, ch1, ev, ch0 rp, glob, gpii, err, type */
++	uint32_t ev_last[2];          /* dword 2 and 3 of the last event */
++} st = { .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1 };
 +static int fts_sleep_chan;
 +
 +static uint32_t
@@ -326,7 +447,7 @@ index 0000000..db48221
 +	return false;
 +}
 +
-+/* Put the serial engine into FIFO mode with the SPI parameters set. */
++/* Put the serial engine into FIFO or GSI mode with the SPI parameters set. */
 +static void
 +fts_se_setup(uint32_t speed_div)
 +{
@@ -344,6 +465,20 @@ index 0000000..db48221
 +	fts_wr(st.geni, SE_OUTPUT_CTRL, DEFAULT_IO_OUTPUT);
 +	fts_wr(st.geni, SE_FORCE_DEFAULT, 1u);
 +	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
++	if (st.gsi) {
++		/*
++		 * geni_se_select_gpi_mode: no engine interrupts, the DMA mode on
++		 * and the GSI events enabled. The word length, the packing and the
++		 * clock come with each transfer's CONFIG0 TRE.
++		 */
++		fts_wr(st.geni, SE_IRQ_ROUTE, 0);
++		fts_wr(st.geni, SE_IRQ_EN, fts_rd(st.geni, SE_IRQ_EN) &
++		    ~(M_CMD_DONE_EN | M_TX_FIFO_WM_EN | M_RX_FIFO_WM_EN | M_RX_FIFO_LAST_EN));
++		fts_wr(st.geni, SE_DMA_MODE, 1u);
++		fts_wr(st.geni, SE_GSI_EVENT_EN, fts_rd(st.geni, SE_GSI_EVENT_EN) | 0xfu);
++		fts_wr(st.geni, SE_SPI_TRANS_CFG, 0);
++		return;
++	}
 +	fts_wr(st.geni, SE_GSI_EVENT_EN, 0);
 +	fts_wr(st.geni, SE_IRQ_ROUTE, (fts_rd(st.geni, SE_IRQ_ROUTE) & ~DMA_IRQ_ROUTE) |
 +	    GENI_M_IRQ_ROUTE | GENI_S_IRQ_ROUTE);
@@ -388,6 +523,367 @@ index 0000000..db48221
 +	st.snap[5] = fts_rd(st.geni, SE_MCLK);
 +}
 +
++static uint32_t
++gpi_rd(uint32_t off)
++{
++	return fts_rd(st.gpi, off - GPI_EE_OFF);
++}
++
++static void
++gpi_wr(uint32_t off, uint32_t val)
++{
++	fts_wr(st.gpi, off - GPI_EE_OFF, val);
++}
++
++static void
++gpi_rmw(uint32_t off, uint32_t mask, uint32_t val)
++{
++	gpi_wr(off, (gpi_rd(off) & ~mask) | (val & mask));
++}
++
++static void
++gpi_snapshot(void)
++{
++	st.gsnap[0] = gpi_rd(GPI_CH_CNTXT(0) + CTX_CONFIG);
++	st.gsnap[1] = gpi_rd(GPI_CH_CNTXT(1) + CTX_CONFIG);
++	st.gsnap[2] = gpi_rd(GPI_EV_CNTXT + CTX_CONFIG);
++	st.gsnap[3] = gpi_rd(GPI_CH_CNTXT(0) + CTX_RP_LO);
++	st.gsnap[4] = gpi_rd(GPI_GLOB_STTS);
++	st.gsnap[5] = gpi_rd(GPI_GPII_STTS);
++	st.gsnap[6] = gpi_rd(GPI_ERROR_LOG);
++	st.gsnap[7] = gpi_rd(GPI_TYPE_IRQ);
++}
++
++/*
++ * Decide whether the GPI's stream can reach memory by physical address.
++ * smmu_mode: P SMMU off, B matched bypass, U unmatched bypass, T matched
++ * translate, F matched fault, u unmatched fault, b bypass programmed here,
++ * N no free stream match register, W the bypass did not stick.
++ */
++static bool
++fts_smmu(void)
++{
++	uint32_t scr0 = fts_rd(st.smmu, SMMU_SCR0);
++	unsigned n = fts_rd(st.smmu, SMMU_IDR0) & 0xffu, free_i = n, i;
++	bool exids = (scr0 & SCR0_EXIDENABLE) != 0;
++	int allow = 0;
++
++	st.smmu_scr0 = scr0;
++	if (scr0 & SCR0_CLIENTPD) {
++		st.smmu_mode = 'P';
++		return true;
++	}
++	if (n > 128u) {
++		n = 128u;
++		free_i = n;
++	}
++	for (i = 0; i < n; i++) {
++		uint32_t smr = fts_rd(st.smmu, SMMU_SMR(i));
++		uint32_t s2cr = fts_rd(st.smmu, SMMU_S2CR(i));
++		bool valid = exids ? (s2cr & S2CR_EXIDVALID) != 0 : (smr & SMR_VALID) != 0;
++		uint32_t id = exids ? (smr & 0xffffu) : (smr & 0x7fffu);
++		uint32_t mask = exids ? (smr >> 16) : ((smr >> 16) & 0x7fffu);
++
++		if (!valid) {
++			if (free_i == n) {
++				free_i = i;
++			}
++			continue;
++		}
++		if (((id ^ GPI_SID) & ~mask & 0xffffu) == 0) {
++			st.smmu_idx = (int)i;
++			st.smmu_s2cr = s2cr;
++			break;
++		}
++	}
++	if (st.smmu_idx >= 0) {
++		switch (S2CR_TYPE(st.smmu_s2cr)) {
++		case 1:
++			st.smmu_mode = 'B';
++			return true;
++		case 0:
++			st.smmu_mode = 'T';
++			break;
++		default:
++			st.smmu_mode = 'F';
++			break;
++		}
++	} else if (!(scr0 & SCR0_USFCFG)) {
++		st.smmu_mode = 'U';
++		return true;
++	} else {
++		st.smmu_mode = 'u';
++	}
++
++	/* Changing the SMMU needs consent: rainftssmmu=1. */
++	PE_parse_boot_argn("rainftssmmu", &allow, sizeof(allow));
++	if (!allow) {
++		return false;
++	}
++	if (st.smmu_idx >= 0) {
++		i = (unsigned)st.smmu_idx;
++	} else if (free_i < n) {
++		i = free_i;
++	} else {
++		st.smmu_mode = 'N';
++		return false;
++	}
++	/* arm_smmu_write_sme order: the S2CR first, then the valid SMR. */
++	fts_wr(st.smmu, SMMU_S2CR(i), S2CR_BYPASS | (exids ? S2CR_EXIDVALID : 0));
++	if (st.smmu_idx < 0) {
++		fts_wr(st.smmu, SMMU_SMR(i), exids ? GPI_SID : (SMR_VALID | GPI_SID));
++	}
++	st.smmu_idx = (int)i;
++	st.smmu_s2cr = fts_rd(st.smmu, SMMU_S2CR(i));
++	if (S2CR_TYPE(st.smmu_s2cr) != 1u ||
++	    (fts_rd(st.smmu, SMMU_SMR(i)) & 0xffffu) != GPI_SID) {
++		st.smmu_mode = 'W';
++		return false;
++	}
++	st.smmu_mode = 'b';
++	return true;
++}
++
++/* Send a GPII command and poll the context until it reaches a state. */
++static int
++gpi_cmd(uint32_t reg, uint32_t cmd, uint32_t ctx, int want)
++{
++	gpi_wr(reg, cmd);
++	for (unsigned n = 0; n < 250u; n++) {
++		uint32_t s = CTX_STATE(gpi_rd(ctx + CTX_CONFIG));
++		if (want < 0 || s == (uint32_t)want) {
++			gpi_wr(GPI_SRC_CH_CLR, gpi_rd(GPI_SRC_CH_IRQ));
++			gpi_wr(GPI_SRC_EV_CLR, gpi_rd(GPI_SRC_EV_IRQ));
++			return 0;
++		}
++		fts_sleep(1);
++	}
++	return ETIMEDOUT;
++}
++
++/*
++ * Bring up GPII 0 the way gpi_ch_init does: interrupts configured (they
++ * are polled here, never taken), the event ring, then the TX and RX
++ * channels allocated and started. gpi_stage tells how far it got:
++ * m no memory, s SMMU refused, r reset of a used GPII failed,
++ * e event ring, 0/1 channel allocate, 2/3 channel start, k ready.
++ */
++static bool
++fts_gpi_init(void)
++{
++	uint64_t pa;
++
++	st.gpi = ml_io_map(GPI_PA, GPI_LEN);
++	st.smmu = ml_io_map(SMMU_PA, SMMU_LEN);
++	if (st.gpi == 0 || st.smmu == 0) {
++		st.gpi_stage = 'm';
++		return false;
++	}
++	if (kmem_alloc_contig(kernel_map, &st.dma, GPI_DMA_SIZE, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		st.gpi_stage = 'm';
++		return false;
++	}
++	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)st.dma);
++	if (!pn) {
++		st.gpi_stage = 'm';
++		return false;
++	}
++	st.dma_pa = ptoa_64(pn);
++	if (!fts_smmu()) {
++		st.gpi_stage = 's';
++		return false;
++	}
++
++	st.gpi_before[0] = gpi_rd(GPI_CH_CNTXT(0) + CTX_CONFIG);
++	st.gpi_before[1] = gpi_rd(GPI_CH_CNTXT(1) + CTX_CONFIG);
++	st.gpi_before[2] = gpi_rd(GPI_EV_CNTXT + CTX_CONFIG);
++	/* Nothing should own GPII 0 before the kernel; undo it if something did. */
++	for (unsigned k = 0; k < 2u; k++) {
++		uint32_t s = CTX_STATE(st.gpi_before[k]);
++		if (s == 0) {
++			continue;
++		}
++		if (s == 2u &&
++		    gpi_cmd(GPI_CH_CMD, (GPI_CMD_STOP << 24) | k, GPI_CH_CNTXT(k), 3)) {
++			st.gpi_stage = 'r';
++			return false;
++		}
++		if (gpi_cmd(GPI_CH_CMD, (GPI_CMD_RESET << 24) | k, GPI_CH_CNTXT(k), 1) ||
++		    gpi_cmd(GPI_CH_CMD, (GPI_CMD_DEALLOC << 24) | k, GPI_CH_CNTXT(k), -1)) {
++			st.gpi_stage = 'r';
++			return false;
++		}
++	}
++	if (CTX_STATE(st.gpi_before[2]) != 0 &&
++	    (gpi_cmd(GPI_EV_CMD, GPI_CMD_RESET << 24, GPI_EV_CNTXT, -1) ||
++	    gpi_cmd(GPI_EV_CMD, GPI_CMD_DEALLOC << 24, GPI_EV_CNTXT, -1))) {
++		st.gpi_stage = 'r';
++		return false;
++	}
++
++	/* gpi_config_interrupts(DEFAULT_IRQ_SETTINGS). */
++	gpi_rmw(GPI_TYPE_IRQ_MSK, 0x7fu, 0x4fu);
++	gpi_rmw(GPI_IEOB_MSK, 1u, 1u);
++	gpi_rmw(GPI_SRC_CH_MSK, 3u, 3u);
++	gpi_rmw(GPI_SRC_EV_MSK, 1u, 1u);
++	gpi_rmw(GPI_GLOB_EN, 0xfu, 0xfu);
++	gpi_rmw(GPI_GPII_EN, 0xfu, 0xfu);
++	gpi_wr(GPI_MSI_LSB, 0);
++	gpi_wr(GPI_MSI_MSB, 0);
++	gpi_wr(GPI_SCRATCH0, 0);
++	gpi_wr(GPI_SCRATCH1, 0);
++	gpi_rmw(GPI_INTSET, 1u, 1u);
++	gpi_wr(GPI_ERROR_LOG, 0);
++
++	/* The event ring: allocate, then program its context. */
++	if (gpi_cmd(GPI_EV_CMD, GPI_CMD_ALLOC << 24, GPI_EV_CNTXT, 1)) {
++		st.gpi_stage = 'e';
++		gpi_snapshot();
++		return false;
++	}
++	pa = st.dma_pa + GPI_EV_RING;
++	gpi_wr(GPI_EV_CNTXT + CTX_CONFIG, (GPI_EL_SIZE << 24) | (1u << 16) | 2u);
++	gpi_wr(GPI_EV_CNTXT + CTX_LEN, GPI_RING_LEN);
++	gpi_wr(GPI_EV_CNTXT + CTX_BASE_LO, (uint32_t)pa);
++	gpi_wr(GPI_EV_CNTXT + CTX_BASE_HI, (uint32_t)(pa >> 32));
++	gpi_wr(GPI_EV_DB + 4u, (uint32_t)(pa >> 32));
++	gpi_wr(GPI_EV_CNTXT + CTX_INT_MOD, 0);
++	gpi_wr(GPI_EV_CNTXT + CTX_MSI_LO, 0);
++	gpi_wr(GPI_EV_CNTXT + CTX_MSI_HI, 0);
++	gpi_wr(GPI_EV_CNTXT + CTX_RPU_LO, 0);
++	gpi_wr(GPI_EV_CNTXT + CTX_RPU_HI, 0);
++	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
++	st.ev_rp = 0;
++	st.ev_wp = GPI_RING_EL - 1u;
++	gpi_wr(GPI_EV_DB, (uint32_t)(pa + st.ev_wp * GPI_EL_SIZE));
++
++	/* The channels: 0 transmits (direction out), 1 receives. */
++	for (unsigned k = 0; k < 2u; k++) {
++		if (gpi_cmd(GPI_CH_CMD, (GPI_CMD_ALLOC << 24) | k, GPI_CH_CNTXT(k), 1)) {
++			st.gpi_stage = (char)('0' + k);
++			gpi_snapshot();
++			return false;
++		}
++		pa = st.dma_pa + (k ? GPI_RX_RING : GPI_TX_RING);
++		gpi_wr(GPI_CH_CNTXT(k) + CTX_CONFIG,
++		    (GPI_EL_SIZE << 24) | ((k == 0 ? 1u : 0u) << 3) | 2u);
++		gpi_wr(GPI_CH_CNTXT(k) + CTX_LEN, GPI_RING_LEN);
++		gpi_wr(GPI_CH_CNTXT(k) + CTX_BASE_LO, (uint32_t)pa);
++		gpi_wr(GPI_CH_CNTXT(k) + CTX_BASE_HI, (uint32_t)(pa >> 32));
++		gpi_wr(GPI_CH_DB(k) + 4u, (uint32_t)(pa >> 32));
++		gpi_wr(GPI_CH_SCRATCH(k, 0),
++		    ((k ^ 1u) << 16) | (GPI_PROTO_SPI << 4) | 0u /* SE 0 */);
++		gpi_wr(GPI_CH_SCRATCH(k, 1), 0);
++		gpi_wr(GPI_CH_SCRATCH(k, 2), 0);
++		gpi_wr(GPI_CH_SCRATCH(k, 3), 0);
++		gpi_wr(GPI_CH_QOS(k), 1);
++		st.wp[k] = 0;
++	}
++	for (unsigned k = 0; k < 2u; k++) {
++		if (gpi_cmd(GPI_CH_CMD, (GPI_CMD_START << 24) | k, GPI_CH_CNTXT(k), 2)) {
++			st.gpi_stage = (char)('2' + k);
++			gpi_snapshot();
++			return false;
++		}
++	}
++	st.gpi_stage = 'k';
++	gpi_snapshot();
++	return true;
++}
++
++static void
++gpi_put(unsigned k, uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3)
++{
++	volatile uint32_t *tre = (volatile uint32_t *)(st.dma +
++	    (k ? GPI_RX_RING : GPI_TX_RING) + st.wp[k] * GPI_EL_SIZE);
++	tre[0] = d0;
++	tre[1] = d1;
++	tre[2] = d2;
++	tre[3] = d3;
++	st.wp[k] = (st.wp[k] + 1u) % GPI_RING_EL;
++}
++
++/*
++ * One full duplex transfer through the GPI, as gpi_create_spi_tre builds
++ * it: the RX channel gets a DMA TRE, the TX channel CONFIG0 (8 bit words,
++ * packed, mode 0, XO / 4), GO (duplex, chip select 0) and a DMA TRE that
++ * asks for the end-of-transfer event.
++ */
++static int
++gpi_xfer(const uint8_t *tx, unsigned len, uint8_t *rx)
++{
++	uint8_t *txb = (uint8_t *)(st.dma + GPI_TX_BUF);
++	uint8_t *rxb = (uint8_t *)(st.dma + GPI_RX_BUF);
++	uint64_t ev = st.dma_pa + GPI_EV_RING;
++	bool done = false;
++	uint32_t code = 0;
++
++	if (len == 0 || len > 0x200u) {
++		return EIO;
++	}
++	memcpy(txb, tx, len);
++	memset(rxb, 0, len);
++	gpi_put(1, (uint32_t)(st.dma_pa + GPI_RX_BUF), (uint32_t)((st.dma_pa + GPI_RX_BUF) >> 32),
++	    len, TRE_TYPE(TRE_DMA));
++	gpi_put(0, 8u - 4u /* word length */ | TRE_C0_TX_PACK | TRE_C0_RX_PACK, 0,
++	    4u /* clk_div */ | (0u << 16) /* clk_src: DFS level 0, XO */,
++	    TRE_TYPE(TRE_CONFIG0) | TRE_CHAIN);
++	gpi_put(0, SPI_GO_DUPLEX | (0u << 8) /* cs */, 0, 0,
++	    TRE_TYPE(TRE_GO) | TRE_CHAIN | TRE_LINK);
++	gpi_put(0, (uint32_t)(st.dma_pa + GPI_TX_BUF), (uint32_t)((st.dma_pa + GPI_TX_BUF) >> 32),
++	    len, TRE_TYPE(TRE_DMA) | TRE_IEOT);
++	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
++	__asm__ volatile("dsb sy" ::: "memory");
++	gpi_wr(GPI_CH_DB(1), (uint32_t)(st.dma_pa + GPI_RX_RING + st.wp[1] * GPI_EL_SIZE));
++	gpi_wr(GPI_CH_DB(0), (uint32_t)(st.dma_pa + GPI_TX_RING + st.wp[0] * GPI_EL_SIZE));
++
++	for (unsigned t = 0; t < 200u && !done; t++) {
++		uint32_t hw = gpi_rd(GPI_EV_CNTXT + CTX_RP_LO);
++		unsigned idx = ((hw - (uint32_t)ev) / GPI_EL_SIZE) % GPI_RING_EL;
++
++		while (st.ev_rp != idx) {
++			volatile uint32_t *e = (volatile uint32_t *)(st.dma + GPI_EV_RING +
++			    st.ev_rp * GPI_EL_SIZE);
++			flush_dcache64((addr64_t)(ev + st.ev_rp * GPI_EL_SIZE), GPI_EL_SIZE, TRUE);
++			st.ev_last[0] = e[2];
++			st.ev_last[1] = e[3];
++			if (((e[3] >> 16) & 0xffu) == EV_XFER_COMPLETE && (e[3] >> 24) == 0) {
++				done = true;
++				code = e[2] >> 24;
++			}
++			st.ev_rp = (st.ev_rp + 1u) % GPI_RING_EL;
++			st.ev_wp = (st.ev_wp + 1u) % GPI_RING_EL;
++		}
++		gpi_wr(GPI_EV_DB, (uint32_t)(ev + st.ev_wp * GPI_EL_SIZE));
++		gpi_wr(GPI_IEOB_CLR, 1u);
++		if (!done) {
++			fts_sleep(1);
++		}
++	}
++	if (!done) {
++		gpi_snapshot();
++		return ETIMEDOUT;
++	}
++	/* The RX DMA TRE has no event of its own: wait for its ring to drain. */
++	for (unsigned t = 0; t < 20u; t++) {
++		if (gpi_rd(GPI_CH_CNTXT(1) + CTX_RP_LO) ==
++		    (uint32_t)(st.dma_pa + GPI_RX_RING + st.wp[1] * GPI_EL_SIZE)) {
++			break;
++		}
++		fts_sleep(1);
++	}
++	flush_dcache64((addr64_t)(st.dma_pa + GPI_RX_BUF), len, TRUE);
++	if (rx != NULL) {
++		memcpy(rx, rxb, len);
++	}
++	if (code != EV_CODE_EOT) {
++		gpi_snapshot();
++		return EIO;
++	}
++	return 0;
++}
++
 +/* One full duplex SPI transfer. */
 +static int
 +fts_spi_xfer(const uint8_t *tx, unsigned txlen, uint8_t *rx, unsigned rxlen)
@@ -397,6 +893,9 @@ index 0000000..db48221
 +
 +	if (txlen > FTS_MAX_XFER || rxlen > FTS_MAX_XFER) {
 +		return EIO;
++	}
++	if (st.gsi) {
++		return gpi_xfer(tx, txlen, rxlen ? rx : NULL);
 +	}
 +	fts_wr(st.geni, SE_IRQ_CLR, 0xffffffffu);
 +	fts_wr(st.geni, SE_TX_WM, 0);
@@ -657,9 +1156,20 @@ index 0000000..db48221
 +		    st.id[0], st.id[1], st.id[3], st.id[2],
 +		    st.raw[0], st.raw[1], st.raw[2], st.raw[3],
 +		    st.raw[4], st.raw[5], st.raw[6], st.raw[7]);
-+		printf("RAIN FTS: %s snap status=%#x irq=%#x txf=%#x rxf=%#x ios=%#x mclk=%#x\n",
-+		    stage, st.snap[0], st.snap[1], st.snap[2], st.snap[3],
-+		    st.snap[4], st.snap[5]);
++		if (!st.gsi) {
++			printf("RAIN FTS: %s snap status=%#x irq=%#x txf=%#x rxf=%#x ios=%#x mclk=%#x\n",
++			    stage, st.snap[0], st.snap[1], st.snap[2], st.snap[3],
++			    st.snap[4], st.snap[5]);
++			continue;
++		}
++		printf("RAIN FTS: %s gpi=%c smmu=%c scr0=%#x idx=%d s2cr=%#x pa=%#llx was=%#x/%#x/%#x\n",
++		    stage, st.gpi_stage, st.smmu_mode, st.smmu_scr0, st.smmu_idx,
++		    st.smmu_s2cr, (unsigned long long)st.dma_pa, st.gpi_before[0],
++		    st.gpi_before[1], st.gpi_before[2]);
++		printf("RAIN FTS: %s gsnap ch=%#x/%#x ev=%#x rp=%#x glob=%#x gpii=%#x err=%#x type=%#x evt=%#x/%#x\n",
++		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
++		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
++		    st.ev_last[0], st.ev_last[1]);
 +	}
 +}
 +
@@ -750,9 +1260,14 @@ index 0000000..db48221
 +	}
 +	st.ifdis = fts_rd(st.geni, SE_IF_DISABLE);
 +	if (st.ifdis & FIFO_IF_DISABLE) {
-+		printf("RAIN FTS: GENI FIFO interface disabled (GSI DMA only); SPI withheld\n");
-+		fts_repeat("gsi-only");
-+		return;
++		st.gsi = true;
++		printf("RAIN FTS: GENI FIFO interface disabled; using GPI DMA\n");
++		if (!fts_gpi_init()) {
++			printf("RAIN FTS: GPI bring-up stopped at '%c' (smmu '%c')\n",
++			    st.gpi_stage, st.smmu_mode);
++			fts_repeat("gpi-withheld");
++			return;
++		}
 +	}
 +	/* The live qupv3_se0_spi_active pinctrl is qup0, no pull, 6 mA.
 +	 * On bengal/khaje GPIO 0..3 select qup0 with function 1. */
