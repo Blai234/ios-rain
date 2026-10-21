@@ -28,6 +28,16 @@ m memory, s SMMU refused, r reset failed, e event ring, 0/1 ch alloc,
 2/3 ch start, k ready. smmu modes: P disabled, B/U bypass, T translate,
 F/u fault, b bypass programmed, N no free SMR, W write did not stick.
 
+CI 39556342466 (commit `2fbcd99`) produced no kernel: `pmap_find_phys`
+is not declared for bsd/ (the job still reports success because of
+`make -k`; check the artifact for `kernel.development.sweet`). Commit
+`5bf3956` declares it like sweet_ufs.c. CI 39557013480 built it: kernel
+SHA-256 `c81bbb0b0bba43b545cd1f191420c5d37102e51d67d445367a12b5048fab2300`
+in `xnu/out-rain-ci/fts10/`; touch-id image (with `rainftssmmu=1`)
+`xnu/out-rain-ci/fts10/rain-display-touch-id-shim/shim-boot.img`, SHA-256
+`e1854a372d45381a46b873539d7c574e2a50b27bdae2d0cbba5aca5d01ab978e`.
+Not booted yet.
+
 ## Rain FT8006S SPI ID probe, repeated result — 2026-10-20
 
 The `fts7` image (CI 39478321979, commit `dceead7`) was built but never
