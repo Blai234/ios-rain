@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1793 @@
+@@ -0,0 +1,1841 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -334,6 +334,7 @@ index 0000000..db48221
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
 +	bool noirq;                   /* rainftsnoirq: GPII interrupts left masked */
 +	bool s1;                      /* rainftss1: identity stage 1 tables instead of bypass */
++	int share_cb;                 /* rainftscb: route the GPI to this firmware bank, -1 off */
 +	uint32_t s1_sctlr, s1_tcr;     /* readbacks after the stage 1 setup */
 +	/* Read-only survey of the valid stream entries and their banks. */
 +	unsigned sme_n;
@@ -355,7 +356,7 @@ index 0000000..db48221
 +	uint32_t gsnap[8];            /* ch0, ch1, ev, ch0 rp, glob, gpii, err, type */
 +	uint32_t xsnap[8];            /* ch0 wp, ch1 rp/wp, ev rp/wp, SE status, m_irq, ios */
 +	uint32_t ev_last[2];          /* dword 2 and 3 of the last event */
-+} st = { .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1, .smmu_cb = -1, .smmu_sample_cb = -1 };
++} st = { .share_cb = -1, .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1, .smmu_cb = -1, .smmu_sample_cb = -1 };
 +static int fts_sleep_chan;
 +
 +static uint32_t
@@ -717,6 +718,46 @@ index 0000000..db48221
 +}
 +
 +static bool
++fts_smmu_share(unsigned idx, unsigned n, bool exids)
++{
++	uint32_t id1 = fts_rd(st.smmu, SMMU_IDR1);
++	unsigned pgshift = (id1 & (1u << 31)) ? 16u : 12u;
++	vm_offset_t gr1 = ml_io_map(SMMU_PA + (1u << pgshift), 1u << pgshift);
++	unsigned cb = (unsigned)st.share_cb;
++	bool used = false;
++
++	st.smmu_idr1 = id1;
++	st.smmu_cb = st.share_cb;
++	if (!gr1 || cb >= (id1 & 0xffu)) {
++		st.smmu_mode = 'M';
++		return false;
++	}
++	/* Only a bank some firmware stream already translates through. */
++	for (unsigned j = 0; j < n; j++) {
++		uint32_t smr = fts_rd(st.smmu, SMMU_SMR(j));
++		uint32_t s2cr = fts_rd(st.smmu, SMMU_S2CR(j));
++		bool valid = exids ? (s2cr & S2CR_EXIDVALID) != 0 : (smr & SMR_VALID) != 0;
++		if (j != idx && valid && S2CR_TYPE(s2cr) == 0 && (s2cr & 0xffu) == cb) {
++			used = true;
++		}
++	}
++	st.smmu_cbar = fts_rd(gr1, cb * 4u);
++	if (!used || (st.smmu_cbar & (3u << 16)) != (1u << 16)) {
++		st.smmu_mode = 'C';
++		return false;
++	}
++	fts_wr(st.smmu, SMMU_S2CR(idx), cb | (exids ? S2CR_EXIDVALID : 0));
++	st.smmu_s2cr = fts_rd(st.smmu, SMMU_S2CR(idx));
++	st.smmu_smr = fts_rd(st.smmu, SMMU_SMR(idx));
++	if (S2CR_TYPE(st.smmu_s2cr) == 0 && (st.smmu_s2cr & 0xffu) == cb) {
++		st.smmu_mode = 'H';
++		return true;
++	}
++	st.smmu_mode = 'W';
++	return false;
++}
++
++static bool
 +fts_smmu_bypass_quirk(unsigned idx, unsigned n, bool exids)
 +{
 +	uint32_t id1 = fts_rd(st.smmu, SMMU_IDR1);
@@ -831,7 +872,8 @@ index 0000000..db48221
 + * N no free stream/context bank, W the bypass did not stick, X shared SID,
 + * M mapping failure, D SCTLR clear failed, C context bank setup failed,
 + * Q Qualcomm bypass quirk, Y the quirk's bank with stage 1 identity tables,
-+ * E the stage 1 setup did not read back.
++ * E the stage 1 setup did not read back, H routed to a firmware bank
++ * (rainftscb).
 + */
 +static bool
 +fts_smmu(void)
@@ -911,7 +953,10 @@ index 0000000..db48221
 +	st.smmu_s2cr = fts_rd(st.smmu, SMMU_S2CR(i));
 +	if (S2CR_TYPE(st.smmu_s2cr) != 1u) {
 +		st.smmu_mode = 'W';
-+		return S2CR_TYPE(st.smmu_s2cr) == 2u &&
++		if (S2CR_TYPE(st.smmu_s2cr) != 2u) {
++			return false;
++		}
++		return st.share_cb >= 0 ? fts_smmu_share(i, n, exids) :
 +		    fts_smmu_bypass_quirk(i, n, exids);
 +	}
 +	if ((fts_rd(st.smmu, SMMU_SMR(i)) & 0xffffu) != GPI_SID) {
@@ -1127,8 +1172,10 @@ index 0000000..db48221
 +	    len, TRE_TYPE(TRE_DMA) | TRE_IEOT);
 +	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
 +	__asm__ volatile("dsb sy" ::: "memory");
++	fts_mark("xfer doorbells next");
 +	gpi_wr(GPI_CH_DB(1), (uint32_t)(st.dma_pa + GPI_RX_RING + st.wp[1] * GPI_EL_SIZE));
 +	gpi_wr(GPI_CH_DB(0), (uint32_t)(st.dma_pa + GPI_TX_RING + st.wp[0] * GPI_EL_SIZE));
++	fts_mark("xfer doorbells rung");
 +
 +	for (unsigned t = 0; t < 200u && !done; t++) {
 +		uint32_t hw = gpi_rd(GPI_EV_CNTXT + CTX_RP_LO);
@@ -1620,6 +1667,7 @@ index 0000000..db48221
 +	int s1 = 0;
 +	(void)PE_parse_boot_argn("rainftss1", &s1, sizeof(s1));
 +	st.s1 = s1 != 0;
++	(void)PE_parse_boot_argn("rainftscb", &st.share_cb, sizeof(st.share_cb));
 +	if (delay_s > 0) {
 +		printf("RAIN FTS: starting in %u s\n", delay_s);
 +		fts_sleep(delay_s * 1000u);

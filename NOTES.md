@@ -137,7 +137,19 @@ CI run 39669244844 built commit e37f2c3; kernel SHA-256
 `c7e561304da137f9f068659bd3a5c24ffbc72c3416858bf6eb903e61c2a9ed29`.
 `xnu/out-rain-ci/fts24/rain-display-touch-survey-shim/shim-boot.img` SHA-256
 `c80a374804f8dbecabf95a77b9279f42bf9e971c6813a5d225c1a82b9e27008f`.
-Device test pending.
+Survey result (`IMG_0271/0272.jpeg`, no reset; this boot scr0=0x230406,
+no 0xf6 entry, smmu=u): the firmware left five valid streams, all
+TRANS to banks 0-3, every bank SCTLR=0xe0 (M clear; CFRE|CFIE|CFCFG),
+CBAR=0x1f000 (S1-translate/S2-bypass type, bypass MEMATTR 0xf = WB),
+TTBR0=0, TCR=0:
+`0: smr 0x800000c0 -> cb0`, `1: 0x800000a0 -> cb0`, `2: 0x80000120 -> cb1`
+(USB ssusb), `3: 0x80000100 -> cb2`, `4: 0x80020420 -> cb3` (MDSS display,
+mask 2). So the firmware itself uses the disabled-bank bypass, with WB
+attributes. Our bank 47 had CBAR 0x10000 (MEMATTR 0 = Device-nGnRnE).
+`rainftscb=<n>` now routes 0xf6 (new SMR at the first free index) to an
+existing firmware bank n that another valid stream already uses, touching
+no bank registers (smmu mode `H`). Variant touch-share: full probe, noirq,
+rainftscb=0, rainftstrace=1 (adds `xfer doorbells next/rung` markers).
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
