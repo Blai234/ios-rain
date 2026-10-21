@@ -71,6 +71,11 @@ probes), so the full transfer reliably resets, while lone RX / CONFIG0 TREs
 Linux but with no handler in this kernel; (2) the GPI's DMA writes (RX data,
 event). `rainftsnoirq=1` (variant touch-noirq) leaves all GPII interrupt
 enables masked; the driver polls the event ring anyway.
+CI run 39660112799 built commit a040e2c; kernel SHA-256
+`21f4ef8ebb4030901040f0238f534bb8d08b6d43e2c4bcd49526e6ea9082fdfa`.
+`xnu/out-rain-ci/fts20/rain-display-touch-noirq-shim/shim-boot.img` SHA-256
+`f621f59742bc106b4c32be131b85440bb91502f50a34970a751aa6a6e33cf697`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
