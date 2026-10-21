@@ -95,6 +95,11 @@ Suspect: a register read after the GPI really ran (SMMU GFSR/bank, GPI
 context, or SE status) stalls the bus. `rainftstrace=1` (variant
 touch-txtrace) prints a held `RAIN FTS: mark <step>` line 1.5 s before
 each access group so a video shows the last one.
+CI run 39663877607 built commit be391e1; kernel SHA-256
+`26ba3b3c5b5a8785164629b5b043798797d5a1d169e3f58ee5785dd445bc28e5`.
+`xnu/out-rain-ci/fts22/rain-display-touch-txtrace-shim/shim-boot.img` SHA-256
+`51f357632c8571f410fccc4f2977a287798a41a1b8e47409d2cf5dd915a5333c`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
