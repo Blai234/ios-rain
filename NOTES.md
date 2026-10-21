@@ -12,7 +12,11 @@ the touch-smmu / touch-gpi variants. CI run 39650990270; kernel SHA-256
 `5072c262cee2447307998bd21214cab201256fd4f87763fadfb9d59b2fc5ab10`. Images in
 `xnu/out-rain-ci/fts15/`: touch-smmu `d99a4c65022f5722bae9a487b1fde590e7a604b10afbc3e5803f85354a916482`,
 touch-gpi `ce0947c21f6e085fe7b9071204ca9a4741233dc548dea862c300118ea86b402d`.
-Device tests pending: touch-smmu first.
+touch-smmu result (`IMG_0251.jpeg`, no reset): `stop-smmu gpi=S smmu=Q
+scr0=0x2f0406 idx=5 s2cr=0x2f`, `id1=0x50000030 smr=0x800000f6 cb=47
+cbar=0x10000 sctlr=0`, scan `ref=0 map=1 busy=0 sample=47/0x15c34106/0`.
+The S1-bypass bank and the TRANS S2CR stick and are harmless on their own,
+so the fts14 reset is in GPI bring-up or the first DMA. touch-gpi pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
