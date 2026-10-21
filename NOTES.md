@@ -13,7 +13,13 @@ with firmware leftovers in other SCTLR bits. No SPI ID read was attempted
 Patch 0082 now tests only `SCTLR.M`, clears the entire SCTLR on an
 unreferenced disabled bank, verifies a zero readback, then verifies CBAR
 and the stream's TRANS S2CR. It restores the old registers if a later
-verification fails. Kernel CI and device test of this change are pending.
+verification fails. CI run 39627859624 built commit 04a0a33 (artifact
+digest matches the local `kernel-artifact.zip`); kernel SHA-256
+`c7f90494f2e65a5483c671699017f2a8cce89e7688d1dc4195acf76fabbc108b`.
+The fts14 temporary boot image is
+`xnu/out-rain-ci/fts14/rain-display-touch-id-shim/shim-boot.img`, SHA-256
+`fae7b10c40c492102774096be005d7a484cfe349eae31209d1afb6dc1a6901cd`.
+Device test pending (expect `smmu=Q` with a bank number, then an SPI ID).
 
 ## Rain FTS context-bank survey — 2026-10-21
 
