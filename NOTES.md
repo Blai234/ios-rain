@@ -150,6 +150,11 @@ attributes. Our bank 47 had CBAR 0x10000 (MEMATTR 0 = Device-nGnRnE).
 existing firmware bank n that another valid stream already uses, touching
 no bank registers (smmu mode `H`). Variant touch-share: full probe, noirq,
 rainftscb=0, rainftstrace=1 (adds `xfer doorbells next/rung` markers).
+CI run 39672293044 built commit 5601e07; kernel SHA-256
+`2b9bbe62bbffce409f0866dbb69278a5590e248268ce50ac4cdd3b851f2c9978`.
+`xnu/out-rain-ci/fts25/rain-display-touch-share-shim/shim-boot.img` SHA-256
+`ea40b442649c212c2883c63e10a30ae6a660915bcd2d26955519c5e0e14d2e90`.
+Device test pending.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 
