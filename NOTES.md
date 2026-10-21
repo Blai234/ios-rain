@@ -25,7 +25,13 @@ run at all. Commit after `77a1d67` adds Linux's `geni_se_io_init` (CGC_CTRL
 FIFO-mode IRQ routing (SE_IRQ_EN M/S, GSI_EVENT_EN = 0), reads
 GENI_IF_DISABLE_RO (0x64; bit 0 set = GSI DMA only, then stage `gsi-only`),
 and a failure snapshot (status, m_irq, TX/RX FIFO status, IOS, M_CLK_CFG)
-printed as a second repeat line `RAIN FTS: <stage> snap ...`. Reading it: raw[3] is the Focaltech
+printed as a second repeat line `RAIN FTS: <stage> snap ...`.
+CI 39495635663 built it (kernel SHA-256
+`c8f65a5a96bf8901b22e539fdf39453167af81d7fcf23438d5a548d7a2149ec7`,
+`xnu/out-rain-ci/fts9/`); touch-id image
+`xnu/out-rain-ci/fts9/rain-display-touch-id-shim/shim-boot.img`, SHA-256
+`40007717a5bf17e93a5954bb4d487e6e4e41246174f546be5e679b73ac734b76`.
+Not booted yet: waiting for the phone to be put back into fastboot. Reading it: raw[3] is the Focaltech
 status byte (0xa0 bits set = rejected), raw[7] the first data byte.
 Expected in boot mode: id `86 32` with a matching CRC. The FT8006S is
 flashless (Android downloads 131072 bytes on every reset), so after the
