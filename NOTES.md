@@ -38,7 +38,14 @@ CI run 39655490103 built commit 19b862e; kernel SHA-256
 `148d885cbb436b5bf9284cf482d2a50f8c4c242803d2d95e8fa79d8dd1604d7d`;
 `xnu/out-rain-ci/fts17/rain-display-touch-rx-shim/shim-boot.img` SHA-256
 `0225e2627dbc5729d24b9703cb59f057c8d01ee7b462af352ba9db5837064c29`.
-Device test pending.
+touch-rx result (`IMG_0259.jpeg`, no reset): `stop-rx fault gfsr=0 fsr=0
+far=<garbage, bank disabled> ch1rp=0x83b0c400 ch1=0x10200102`, gsnap
+unchanged, err=0. The RX ring RP stays at the TRE (an RX DMA TRE only
+completes with SPI data), so the fetch itself is not proven; but ringing
+the RX doorbell is harmless. The reset needs the TX side.
+`rainftsstop=5` (variant touch-cfg, stage `stop-cfg`) sends a lone TX
+CONFIG0 TRE with IEOT and no GO: a TRE read plus an event write to memory,
+no SPI clock. It prints `evt=` (event dwords 2/3; 0x22 type, code 2 EOT).
 
 ## Rain FTS disabled context bank check — 2026-10-21
 

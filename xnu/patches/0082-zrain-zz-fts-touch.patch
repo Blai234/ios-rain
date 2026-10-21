@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1530 @@
+@@ -0,0 +1,1582 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -317,7 +317,8 @@ index 0000000..db48221
 +	unsigned wp[2], ev_rp, ev_wp;
 +	char smmu_mode, gpi_stage;    /* see fts_smmu() and fts_gpi_init() */
 +	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
-+	                               * 4 after one RX TRE fetch (no SPI clock) */
++	                               * 4 after one RX TRE fetch (no SPI clock),
++	                               * 5 after one TX CONFIG0 TRE with an EOT event */
 +	uint32_t flt[6];              /* sGFSR, CB FSR, CB FAR lo/hi, ch1 RP, ch1 config */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
@@ -1028,13 +1029,11 @@ index 0000000..db48221
 + * GO on the TX channel the serial engine never clocks SPI. Then read the
 + * SMMU global and context-bank fault registers.
 + */
++static void gpi_read_faults(void);
++
 +static void
 +gpi_rx_fetch_probe(void)
 +{
-+	uint32_t id1 = st.smmu_idr1;
-+	unsigned pgsize = (id1 & (1u << 31)) ? 0x10000u : 0x1000u;
-+	vm_offset_t cbpage = 0;
-+
 +	gpi_put(1, (uint32_t)(st.dma_pa + GPI_RX_BUF), (uint32_t)((st.dma_pa + GPI_RX_BUF) >> 32),
 +	    16u, TRE_TYPE(TRE_DMA));
 +	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
@@ -1043,6 +1042,18 @@ index 0000000..db48221
 +	fts_sleep(100);
 +	gpi_wr(GPI_CH_DB(1), (uint32_t)(st.dma_pa + GPI_RX_RING + st.wp[1] * GPI_EL_SIZE));
 +	fts_sleep(500);
++	gpi_read_faults();
++	printf("RAIN FTS: RX fetch survived gfsr=%#x fsr=%#x\n", st.flt[0], st.flt[1]);
++}
++
++/* The SMMU fault registers and the RX channel after a probe. */
++static void
++gpi_read_faults(void)
++{
++	uint32_t id1 = st.smmu_idr1;
++	unsigned pgsize = (id1 & (1u << 31)) ? 0x10000u : 0x1000u;
++	vm_offset_t cbpage = 0;
++
 +	st.flt[0] = fts_rd(st.smmu, SMMU_GFSR);
 +	if (st.smmu_cb >= 0) {
 +		cbpage = ml_io_map(SMMU_PA + st.smmu_cbbase + (unsigned)st.smmu_cb * pgsize, pgsize);
@@ -1055,7 +1066,43 @@ index 0000000..db48221
 +	st.flt[4] = gpi_rd(GPI_CH_CNTXT(1) + CTX_RP_LO);
 +	st.flt[5] = gpi_rd(GPI_CH_CNTXT(1) + CTX_CONFIG);
 +	gpi_snapshot();
-+	printf("RAIN FTS: RX fetch survived gfsr=%#x fsr=%#x\n", st.flt[0], st.flt[1]);
++}
++
++/*
++ * rainftsstop=5: a lone CONFIG0 TRE on the TX channel, asking for the EOT
++ * event. The GPI reads the TRE, programs the serial engine and writes one
++ * event into the ring, all without a GO, so SPI is never clocked. This
++ * tests a GPI memory write (the event) apart from an SPI transfer.
++ */
++static void
++gpi_cfg_probe(void)
++{
++	uint64_t ev = st.dma_pa + GPI_EV_RING;
++
++	gpi_put(0, 8u - 4u /* word length */ | TRE_C0_TX_PACK | TRE_C0_RX_PACK, 0,
++	    4u /* clk_div */, TRE_TYPE(TRE_CONFIG0) | TRE_IEOT);
++	flush_dcache64((addr64_t)st.dma_pa, GPI_DMA_SIZE, TRUE);
++	__asm__ volatile("dsb sy" ::: "memory");
++	printf("RAIN FTS: ringing the TX doorbell for CONFIG0 only\n");
++	fts_sleep(100);
++	gpi_wr(GPI_CH_DB(0), (uint32_t)(st.dma_pa + GPI_TX_RING + st.wp[0] * GPI_EL_SIZE));
++	for (unsigned t = 0; t < 500u; t++) {
++		uint32_t hw = gpi_rd(GPI_EV_CNTXT + CTX_RP_LO);
++		unsigned idx = ((hw - (uint32_t)ev) / GPI_EL_SIZE) % GPI_RING_EL;
++
++		if (idx != st.ev_rp) {
++			volatile uint32_t *e = (volatile uint32_t *)(st.dma + GPI_EV_RING +
++			    st.ev_rp * GPI_EL_SIZE);
++			flush_dcache64((addr64_t)(ev + st.ev_rp * GPI_EL_SIZE), GPI_EL_SIZE, TRUE);
++			st.ev_last[0] = e[2];
++			st.ev_last[1] = e[3];
++			break;
++		}
++		fts_sleep(1);
++	}
++	gpi_read_faults();
++	printf("RAIN FTS: CONFIG0 survived evt=%#x/%#x gfsr=%#x\n",
++	    st.ev_last[0], st.ev_last[1], st.flt[0]);
 +}
 +
 +/* One full duplex SPI transfer. */
@@ -1351,7 +1398,7 @@ index 0000000..db48221
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
 +		    st.ev_last[0], st.ev_last[1]);
-+		if (st.stop == 4) {
++		if (st.stop >= 4) {
 +			printf("RAIN FTS: %s fault gfsr=%#x fsr=%#x far=%#x%08x ch1rp=%#x ch1=%#x\n",
 +			    stage, st.flt[0], st.flt[1], st.flt[3], st.flt[2],
 +			    st.flt[4], st.flt[5]);
@@ -1484,6 +1531,11 @@ index 0000000..db48221
 +	if (st.stop == 4 && st.gsi) {
 +		gpi_rx_fetch_probe();
 +		fts_repeat("stop-rx");
++		return;
++	}
++	if (st.stop == 5 && st.gsi) {
++		gpi_cfg_probe();
++		fts_repeat("stop-cfg");
 +		return;
 +	}
 +	fts_probe_id();

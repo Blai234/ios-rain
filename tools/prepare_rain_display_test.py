@@ -63,12 +63,14 @@ TOUCH_ID_CMDLINE = (CONSOLE_CMDLINE + ' sweetfb_scale=1 rainfts=1 rainftstx=1 ra
                     ' rainftsprobe=1')
 # rainftsstop=1 stops after the SMMU change, 2 after GPI channel start, 3
 # after the pin mux and GSI-mode SE setup (before the first DMA), 4 after
-# one RX TRE fetch with no SPI clock (then the SMMU fault registers), so
+# one RX TRE fetch with no SPI clock (then the SMMU fault registers), 5
+# after a lone TX CONFIG0 TRE whose EOT event the GPI writes to memory, so
 # a reset can be pinned to one step.
 TOUCH_SMMU_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=1'
 TOUCH_GPI_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=2'
 TOUCH_SE_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=3'
 TOUCH_RX_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=4'
+TOUCH_CFG_CMDLINE = TOUCH_ID_CMDLINE + ' rainftsstop=5'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -81,6 +83,7 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-gpi', TOUCH_GPI_CMDLINE),
             ('touch-se', TOUCH_SE_CMDLINE),
             ('touch-rx', TOUCH_RX_CMDLINE),
+            ('touch-cfg', TOUCH_CFG_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 
