@@ -50,7 +50,16 @@ CI run 39657167021 built commit eda97db; kernel SHA-256
 `2624553927838f4765a3c50711d2fc4ef308b59a75dbb9fbfd39f78aec1f753f`;
 `xnu/out-rain-ci/fts18/rain-display-touch-cfg-shim/shim-boot.img` SHA-256
 `36b38efa8f600a951f690fe7a496970368aab9d7bc69f063fa699f696000003a`.
-Device test pending.
+touch-cfg result (`IMG_0260.jpeg`, no reset): `gsnap ch=0x1020000a/0x10200102
+ev=0x10110002 rp=0x83aec000 err=0 evt=0/0`, `fault gfsr=0 fsr=0`. The TX
+channel RP never left the ring base and no event arrived in 500 ms: the GPI
+did not consume even a lone CONFIG0 TRE. Every GPI step up to and including
+both doorbells has now run without a reset; the only reset was the single
+fts14 run (right after a dead-battery boot), so it is not yet proven
+reproducible. Next: rerun the full touch-id probe with an `xsnap` line
+(ch0 WP, ch1 RP/WP, EV RP/WP from CNTXT_4/6, SE GENI_STATUS, M_IRQ_STATUS,
+IOS) to see whether the doorbells reach the context WP and whether the SE
+ever saw a GO.
 
 ## Rain FTS disabled context bank check — 2026-10-21
 

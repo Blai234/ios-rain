@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1582 @@
+@@ -0,0 +1,1596 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -230,6 +230,7 @@ index 0000000..db48221
 +#define CTX_BASE_LO      0x08u
 +#define CTX_BASE_HI      0x0cu
 +#define CTX_RP_LO        0x10u
++#define CTX_WP_LO        0x18u
 +#define CTX_INT_MOD      0x20u
 +#define CTX_MSI_LO       0x28u
 +#define CTX_MSI_HI       0x2cu
@@ -329,6 +330,7 @@ index 0000000..db48221
 +	int smmu_sample_cb;
 +	uint32_t gpi_before[3];       /* ch0, ch1, ev context word 0 at entry */
 +	uint32_t gsnap[8];            /* ch0, ch1, ev, ch0 rp, glob, gpii, err, type */
++	uint32_t xsnap[8];            /* ch0 wp, ch1 rp/wp, ev rp/wp, SE status, m_irq, ios */
 +	uint32_t ev_last[2];          /* dword 2 and 3 of the last event */
 +} st = { .clk = -1, .id_err = -1, .smmu_mode = '-', .gpi_stage = '-', .smmu_idx = -1, .smmu_cb = -1, .smmu_sample_cb = -1 };
 +static int fts_sleep_chan;
@@ -568,6 +570,15 @@ index 0000000..db48221
 +	st.gsnap[5] = gpi_rd(GPI_GPII_STTS);
 +	st.gsnap[6] = gpi_rd(GPI_ERROR_LOG);
 +	st.gsnap[7] = gpi_rd(GPI_TYPE_IRQ);
++	/* The doorbells land in the context WP; the serial engine shows a GO. */
++	st.xsnap[0] = gpi_rd(GPI_CH_CNTXT(0) + CTX_WP_LO);
++	st.xsnap[1] = gpi_rd(GPI_CH_CNTXT(1) + CTX_RP_LO);
++	st.xsnap[2] = gpi_rd(GPI_CH_CNTXT(1) + CTX_WP_LO);
++	st.xsnap[3] = gpi_rd(GPI_EV_CNTXT + CTX_RP_LO);
++	st.xsnap[4] = gpi_rd(GPI_EV_CNTXT + CTX_WP_LO);
++	st.xsnap[5] = fts_rd(st.geni, SE_STATUS);
++	st.xsnap[6] = fts_rd(st.geni, SE_IRQ);
++	st.xsnap[7] = fts_rd(st.geni, SE_IOS);
 +}
 +
 +/*
@@ -1398,6 +1409,9 @@ index 0000000..db48221
 +		    stage, st.gsnap[0], st.gsnap[1], st.gsnap[2], st.gsnap[3],
 +		    st.gsnap[4], st.gsnap[5], st.gsnap[6], st.gsnap[7],
 +		    st.ev_last[0], st.ev_last[1]);
++		printf("RAIN FTS: %s xsnap wp0=%#x rp1=%#x wp1=%#x evrp=%#x evwp=%#x se=%#x mirq=%#x ios=%#x\n",
++		    stage, st.xsnap[0], st.xsnap[1], st.xsnap[2], st.xsnap[3],
++		    st.xsnap[4], st.xsnap[5], st.xsnap[6], st.xsnap[7]);
 +		if (st.stop >= 4) {
 +			printf("RAIN FTS: %s fault gfsr=%#x fsr=%#x far=%#x%08x ch1rp=%#x ch1=%#x\n",
 +			    stage, st.flt[0], st.flt[1], st.flt[3], st.flt[2],
