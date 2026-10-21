@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1328 @@
+@@ -0,0 +1,1330 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -49,6 +49,8 @@ index 0000000..db48221
 +#include <pexpert/pexpert.h>
 +
 +extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++/* osfmk/vm/pmap.h keeps it from the BSD layer; sweet_ufs.c does the same. */
++extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 +extern void sweet_hid_touch(int finger, int down, int x, int y);
 +void rain_touch_init(void);
 +
