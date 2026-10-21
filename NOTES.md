@@ -1,5 +1,20 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Rain FTS disabled context bank check — 2026-10-21
+
+`IMG_0247.jpeg` from the fts13 temporary boot shows `smmu=N`,
+`ref=4 map=44 busy=44`, and sample context bank 47
+`SCTLR=0x3dc34106 CBAR=0`. The scan counted any nonzero SCTLR as busy,
+but `SCTLR.M` (bit 0) is clear in the sample. ARM SMMU defines that bit as
+the context-bank enable bit. The scan therefore rejected disabled banks
+with firmware leftovers in other SCTLR bits. No SPI ID read was attempted
+(`id_err=-1`); touch still does not respond.
+
+Patch 0082 now tests only `SCTLR.M`, clears the entire SCTLR on an
+unreferenced disabled bank, verifies a zero readback, then verifies CBAR
+and the stream's TRANS S2CR. It restores the old registers if a later
+verification fails. Kernel CI and device test of this change are pending.
+
 ## Rain FTS context-bank survey — 2026-10-21
 
 CI run 39616868001 built commit bdb8c7b. Kernel SHA-256
@@ -16,9 +31,14 @@ layout agrees with upstream Linux arm-smmu definitions.
 
 Patch 0082 now records how many banks are referenced, mapped and have a
 nonzero SCTLR, plus a sample bank's SCTLR and CBAR. This survey is read-only;
-the guarded GPI DMA path stays withheld. Host syntax passes; CI/device test
-of the survey is pending. Do not repurpose an active bank based only on
-`smmu=N`.
+the guarded GPI DMA path stays withheld. Host syntax and patch parse pass.
+CI run 39625111359 built commit fe6ca7f; kernel SHA-256
+`f779cafa8a311bf223d1a2339b47123c7843b0058455280144e4db96d2cf005f`.
+The fts13 temporary boot image is
+`xnu/out-rain-ci/fts13/rain-display-touch-id-shim/shim-boot.img`, SHA-256
+`822d696682de8306c8604f4b5cc014838a947cb876b231eb88b641b1875e37e7`.
+`fastboot boot` returned OKAY on product `rain`; screen values are recorded
+above. Do not repurpose an active bank based only on `smmu=N`.
 
 ## Rain FTS newly allocated SMMU stream — 2026-10-21
 

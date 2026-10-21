@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1447 @@
+@@ -0,0 +1,1461 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -281,6 +281,7 @@ index 0000000..db48221
 +#define SMMU_IDR1        0x024u
 +#define SMMU_SMR(i)      (0x800u + 4u * (i))
 +#define SMMU_S2CR(i)     (0xc00u + 4u * (i))
++#define SMMU_SCTLR_M     (1u << 0)
 +#define SCR0_CLIENTPD    (1u << 0)
 +#define SCR0_EXIDENABLE  (1u << 3)
 +#define SCR0_USFCFG      (1u << 10)
@@ -568,6 +569,8 @@ index 0000000..db48221
 + * for stage-1 translation / stage-2 bypass instead. Restrict that quirk
 + * to the GPI's exact SID, including a slot just reserved for it; never
 + * repoint a masked/shared SMR or a context bank used by another stream.
++ * An unused bank is disabled when SCTLR.M is clear; other bits may remain
++ * set from firmware. Clear the whole SCTLR and verify before routing DMA.
 + */
 +static bool
 +fts_smmu_bypass_quirk(unsigned idx, unsigned n, bool exids)
@@ -600,7 +603,7 @@ index 0000000..db48221
 +		vm_offset_t cbpage;
 +		unsigned off = cbbase + (unsigned)cb * pgsize;
 +		bool referenced = false;
-+		uint32_t old_cbar, sctlr;
++		uint32_t old_cbar, old_s2cr, sctlr;
 +
 +		if (off > 0x80000u - pgsize)
 +			continue;
@@ -631,17 +634,25 @@ index 0000000..db48221
 +			st.smmu_sample_sctlr = sctlr;
 +			st.smmu_sample_cbar = fts_rd(gr1, (unsigned)cb * 4u);
 +		}
-+		if (sctlr != 0) {
++		if (sctlr & SMMU_SCTLR_M) {
 +			st.smmu_busy++;
 +			continue;
 +		}
 +		old_cbar = fts_rd(gr1, (unsigned)cb * 4u);
++		old_s2cr = fts_rd(st.smmu, SMMU_S2CR(idx));
 +		st.smmu_cb = cb;
-+		st.smmu_sctlr = sctlr;
++		fts_wr(cbpage, 0, 0);
++		st.smmu_sctlr = fts_rd(cbpage, 0);
++		if (st.smmu_sctlr != 0) {
++			fts_wr(cbpage, 0, sctlr);
++			st.smmu_mode = 'D';
++			return false;
++		}
 +		fts_wr(gr1, (unsigned)cb * 4u, 1u << 16);
 +		st.smmu_cbar = fts_rd(gr1, (unsigned)cb * 4u);
 +		if ((st.smmu_cbar & (3u << 16)) != (1u << 16)) {
 +			fts_wr(gr1, (unsigned)cb * 4u, old_cbar);
++			fts_wr(cbpage, 0, sctlr);
 +			st.smmu_mode = 'C';
 +			return false;
 +		}
@@ -653,7 +664,9 @@ index 0000000..db48221
 +			st.smmu_mode = 'Q';
 +			return true;
 +		}
++		fts_wr(st.smmu, SMMU_S2CR(idx), old_s2cr);
 +		fts_wr(gr1, (unsigned)cb * 4u, old_cbar);
++		fts_wr(cbpage, 0, sctlr);
 +		st.smmu_mode = 'W';
 +		return false;
 +	}
@@ -666,7 +679,8 @@ index 0000000..db48221
 + * smmu_mode: P SMMU off, B matched bypass, U unmatched bypass, T matched
 + * translate, F matched fault, u unmatched fault, b bypass programmed here,
 + * N no free stream/context bank, W the bypass did not stick, X shared SID,
-+ * M mapping failure, C context bank setup failed, Q Qualcomm bypass quirk.
++ * M mapping failure, D SCTLR clear failed, C context bank setup failed,
++ * Q Qualcomm bypass quirk.
 + */
 +static bool
 +fts_smmu(void)
