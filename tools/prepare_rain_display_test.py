@@ -94,6 +94,8 @@ TOUCH_SHARE_TX_CMDLINE = TOUCH_TXTRACE_CMDLINE + ' rainftscb=0'
 # CONFIG0 and GO only; no TX DMA descriptor. A reset here would implicate
 # starting the SE SPI command, while survival points at the DMA/data step.
 TOUCH_SHARE_GO_CMDLINE = TOUCH_SHARE_CMDLINE + ' rainftsstop=7'
+# Keep GO chained as in the failing TX-only transfer, but omit the DMA TRE.
+TOUCH_SHARE_CHAIN_CMDLINE = TOUCH_SHARE_CMDLINE + ' rainftsstop=8'
 
 VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('console', CONSOLE_CMDLINE),
@@ -116,6 +118,7 @@ VARIANTS = (('crop', CMDLINE), ('scaled', CMDLINE + ' sweetfb_scale=1'),
             ('touch-share', TOUCH_SHARE_CMDLINE),
             ('touch-share-tx', TOUCH_SHARE_TX_CMDLINE),
             ('touch-share-go', TOUCH_SHARE_GO_CMDLINE),
+            ('touch-share-chain', TOUCH_SHARE_CHAIN_CMDLINE),
             ('touch-quiet', TOUCH_QUIET_CMDLINE))
 
 

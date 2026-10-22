@@ -16,11 +16,23 @@ repackaged with `rainftsstop=6 rainftscb=0 rainftstrace=1` as fts26
 temporary `fastboot boot` succeeded on product `rain`. The phone rebooted
 again. Without a last-marker photo, this shows the TX-only path also causes
 the reboot with firmware bank 0; it does not identify the exact instruction.
-The current patch adds `rainftsstop=7`: CONFIG0 then GO TX with no DMA TRE,
-to split SE command start from TX data fetch. Variant `touch-share-go` uses
-the same firmware bank 0. Build it in CI, package a temporary image, and
-compare whether the phone reboots. A quiet result still requires the ring
-pointer/SE status photo before drawing a hardware conclusion.
+Commit `08212b7` added `rainftsstop=7`: CONFIG0 then unchained GO TX with no
+DMA TRE. CI run `39675717543` succeeded; artifact SHA-256
+`6f36b82d7cd25342b3a8e0532e367974d5b47701dbf551bd03abaee1b8a82d8a`,
+kernel SHA-256
+`c4bdee7605b24d0b8e0941e3fe1e6070f9e07e817541c6e7fa36f7e40051c6a5`.
+The fts27 `touch-share-go` image SHA-256 is
+`808ce0bbde862b91b335aebaeb8b41c1868caa7bafc7015e6d7f3f28cdb4f2d5`.
+Its temporary `fastboot boot` succeeded on product `rain`, and it did not
+reboot. Photos `IMG_0277`–`0279` show `stop-go gpi=k smmu=H`, SMR
+`0x800000f6`, CB0 CBAR `0x1f000` SCTLR `0xe0`, TX ring RP and WP both
+`0x83af0020` (the GPI consumed CONFIG0 and GO), SE status `0x41`, and
+SMMU GFSR/CB FSR zero. This proves the shared firmware bank can serve the
+GPI's ring reads and the SE accepts GO without crashing. The GO-only test
+cleared the GO chain bit, unlike the failing TX test. The next `rainftsstop=8`
+variant keeps GO chained but omits the DMA TRE. Build and temporarily boot
+`touch-share-chain`: if it survives and consumes both TREs, the extra DMA
+TRE or its data fetch is implicated; if it reboots, examine GO chaining.
 
 ## Rain FTS reset bisection — 2026-10-21
 

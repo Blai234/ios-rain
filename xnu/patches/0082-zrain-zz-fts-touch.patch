@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..db48221
 --- /dev/null
 +++ b/bsd/dev/sweet_fts.c
-@@ -0,0 +1,1843 @@
+@@ -0,0 +1,1845 @@
 +/*
 + * Rain (Redmi 10C) FT8006S touchscreen on the GENI SPI block.
 + *
@@ -343,7 +343,8 @@ index 0000000..db48221
 +	int stop;                     /* rainftsstop: 1 after SMMU, 2 after GPI init, 3 after SE setup,
 +	                               * 4 after one RX TRE fetch (no SPI clock),
 +	                               * 5 after one TX CONFIG0 TRE with an EOT event,
-+	                               * 6 after TX-only SPI write, 7 after GO without DMA */
++	                               * 6 after TX-only SPI write, 7 after GO without DMA,
++	                               * 8 after chained GO without DMA */
 +	uint32_t flt[7];              /* sGFSR, CB FSR, CB FAR lo/hi, ch1 RP, ch1 config, FSYNR0 */
 +	int smmu_idx;
 +	uint32_t smmu_scr0, smmu_s2cr;
@@ -1249,8 +1250,9 @@ index 0000000..db48221
 +
 +/*
 + * rainftsstop=6: a TX-only SPI write (CONFIG0, GO TX, DMA) with no IEOT or
-+ * RX TRE. rainftsstop=7: CONFIG0 and GO TX only, with no DMA TRE. This
-+ * separates starting the SPI command from fetching the TX data.
++ * RX TRE. rainftsstop=7: CONFIG0 and GO TX only, with no DMA TRE or
++ * chain bit on GO. rainftsstop=8 keeps GO chained but has no DMA TRE.
++ * These separate starting the SPI command and the chain bit from data.
 + */
 +static void
 +gpi_txonly_probe(void)
@@ -1263,7 +1265,7 @@ index 0000000..db48221
 +	    4u /* clk_div */, TRE_TYPE(TRE_CONFIG0) | TRE_CHAIN);
 +	gpi_put(0, SPI_GO_TX | (0u << 8) /* cs */, 0, 0,
 +	    TRE_TYPE(TRE_GO) | (st.stop == 7 ? 0 : TRE_CHAIN));
-+	if (st.stop != 7) {
++	if (st.stop != 7 && st.stop != 8) {
 +		gpi_put(0, (uint32_t)(st.dma_pa + GPI_TX_BUF),
 +		    (uint32_t)((st.dma_pa + GPI_TX_BUF) >> 32), sizeof(hdr), TRE_TYPE(TRE_DMA));
 +	}
@@ -1271,7 +1273,7 @@ index 0000000..db48221
 +	__asm__ volatile("dsb sy" ::: "memory");
 +	fts_mark("tx doorbell next");
 +	printf("RAIN FTS: ringing the TX doorbell for %s\n",
-+	    st.stop == 7 ? "GO only" : "TX-only write");
++	    st.stop == 7 ? "GO only" : st.stop == 8 ? "chained GO only" : "TX-only write");
 +	fts_sleep(100);
 +	gpi_wr(GPI_CH_DB(0), (uint32_t)(st.dma_pa + GPI_TX_RING + st.wp[0] * GPI_EL_SIZE));
 +	fts_mark("tx doorbell rung, waiting");
@@ -1794,9 +1796,9 @@ index 0000000..db48221
 +		fts_repeat("stop-cfg");
 +		return;
 +	}
-+	if ((st.stop == 6 || st.stop == 7) && st.gsi) {
++	if ((st.stop == 6 || st.stop == 7 || st.stop == 8) && st.gsi) {
 +		gpi_txonly_probe();
-+		fts_repeat(st.stop == 7 ? "stop-go" : "stop-tx");
++		fts_repeat(st.stop == 7 ? "stop-go" : st.stop == 8 ? "stop-chain" : "stop-tx");
 +		return;
 +	}
 +	fts_probe_id();
